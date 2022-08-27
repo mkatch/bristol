@@ -1,3 +1,11 @@
+function requireNamedArgument(name, args) {
+  const value = args[name];
+  if (value === undefined) {
+    throw new Error("'" + name + "' is required.");
+  }
+  return value;
+}
+
 export class UnimplementedError extends Error {
   constructor(...params) {
     super(...params);
@@ -49,6 +57,10 @@ export class Arrays {
 
   static pop(xs) {
     xs.splice(xs.length - 1, 1);
+  }
+
+  static includesAll(xs, ys) {
+    return ys.every(y => xs.includes(y));
   }
 }
 

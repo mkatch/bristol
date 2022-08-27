@@ -31,6 +31,14 @@ export class Primitive {
     delete this.parents;
   }
 
+  setInvalid(value) {
+    if (value) {
+      this.invalid = true;
+    } else {
+      delete this.invalid;
+    }
+  }
+
   applyConstraints() { throw new UnimplementedError(); }
 
   distSq(_point) { throw new UnimplementedError(); }
@@ -101,6 +109,16 @@ export class PointPrimitive extends Primitive {
 
   closestPoint(_reference, result) {
     return result.copy(this.position);
+  }
+
+  tryMoveTo(position) {
+    const dragger = this.tryDrag(this.position);
+    if (dragger) {
+      dragger.dragTo(position);
+      return true;
+    } else {
+      return false;
+    }
   }
 }
 
@@ -203,25 +221,29 @@ export class LinePrimitive extends CurvePrimitive {
 }
 
 export class TwoPointLinePrimitive extends LinePrimitive {
-  constructor(point1, point2) {
-    super(new vec2(0, 0), new vec2(1, 0), [point1, point2]);
+  constructor(point0, point1) {
+    super(new vec2(0, 0), new vec2(1, 0), [point0, point1]);
     this.applyConstraints();
   }
 
+  get point0() { return this.parents[0]; }
+
+  get point1() { return this.parents[1]; }
+
   applyConstraints() {
-    this.origin.copy(this.parents[0].position);
-    this.direction.span(this.origin, this.parents[1].position);
+    this.origin.copy(this.point0.position);
+    this.direction.span(this.origin, this.point1.position);
   }
 
   tryDrag(position) {
-    const dragger0 = this.parents[0].tryDrag(position);
-    const dragger1 = this.parents[1].tryDrag(position);
+    const dragger0 = this.point0.tryDrag(position);
+    const dragger1 = this.point1.tryDrag(position);
     if (dragger0 && dragger1) {
       return new CompoundPrimitiveDragger([dragger0, dragger1]);
     } else if (dragger0) {
-      return new PivotPointPrimitiveDragger(this.parents[1], this.parents[0]);
+      return new PivotPointPrimitiveDragger(this.point1, this.point0);
     } else if (dragger1) {
-      return new PivotPointPrimitiveDragger(this.parents[0], this.parents[1]);
+      return new PivotPointPrimitiveDragger(this.point0, this.point1);
     }
   }
 }

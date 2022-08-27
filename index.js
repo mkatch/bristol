@@ -2,13 +2,13 @@ import { CurvePrimitive, FreePointPrimitive, IntersectionPointPrimitive, TwoPoin
 import { vec2, sq } from '/math.js';
 import { PointPrimitive, LinePrimitive } from '/primitives.js';
 import { Arrays } from '/utils.js';
+import { Renderer } from '/draw.js';
 
+const renderer = new Renderer(canvas);
+const viewport = renderer.viewport;
 const pressedKeys = new Set();
 const markedPrimitives = [];
 let needsRedraw = true;
-let viewportOrigin = new vec2(0, 0);
-let viewportScale = 1;
-let clip = null;
 let dragStartWindow = null;
 let viewportOriginAtGrab = null;
 let isDraggingScene = false;
@@ -28,14 +28,6 @@ primitives.push = function (primitive) {
   needsRedraw = true;
 }
 let primitiveDragger = null;
-
-const pointsToDraw = [];
-const highlightedPointsToDraw = [];
-const intersectionPointsToDraw = [];
-const linesToDraw = [];
-const highlightedLinesToDraw = [];
-
-const ctx = canvas.getContext('2d');
 
 window.addEventListener('resize'   , onWindowResize, false);
 window.addEventListener('keydown'  , userInputEventHandler(onKeyDown));
@@ -63,77 +55,30 @@ function onAnimationFrame() {
 }
 
 function draw() {
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = 'white';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  renderer.clear();
 
-  pointsToDraw.length = 0;
-  highlightedPointsToDraw.length = 0;
-  intersectionPointsToDraw.length = 0;
-  linesToDraw.length = 0;
-  highlightedLinesToDraw.length = 0;
-
-  primitives.forEach((primitive) => {
-    const marked = markedPrimitives.includes(primitive);
-    if (primitive instanceof PointPrimitive) {
-      if (primitive instanceof IntersectionPointPrimitive) {
-        intersectionPointsToDraw.push(primitive);
-      } else if (marked) {
-        highlightedPointsToDraw.push(primitive);
-      } else {
-        pointsToDraw.push(primitive);
-      }
-    } else if (primitive instanceof LinePrimitive) {
-      if (marked) {
-        highlightedLinesToDraw.push(primitive);
-      } else {
-        linesToDraw.push(primitive);
-      }
-    } else {
-      console.error("Unknown primitive type: ", primitive.prototype.name);
+  primitives.forEach(primitive => renderer.stagePrimitive(
+    primitive, {
+      marked: markedPrimitives.includes(primitive),
     }
-  });
-
-  ctx.setTransform(
-    viewportScale,  0,
-    0, viewportScale,
-    viewportOrigin.x, viewportOrigin.y);
-  clip = {
-    x0: -viewportOrigin.x / viewportScale,
-    x1: (canvas.width - viewportOrigin.x) / viewportScale,
-    y0: -viewportOrigin.y / viewportScale,
-    y1: (canvas.height - viewportOrigin.y) / viewportScale,
-  }
-
-  ctx.strokeStyle = "grey";
-  ctx.lineWidth = 1 / viewportScale;
-
-  ctx.beginPath();
-  linesToDraw.forEach(line => addLineToPath(line.origin, line.direction));
-  ctx.stroke();
+  ));
 
   if (newLine) {
-    pointsToDraw.push(newLine.A, newLine.B);
-    ctx.strokeStyle = newLine.B.invalid ? "red" : "blue";
-    ctx.beginPath();
-    addLineToPath(
-      newLine.A.position,
-      vec2.span(newLine.A.position, newLine.B.position),
-    );
-    ctx.stroke();
+    newLine.parents.forEach(point => {
+      if (point.auxiliary) {
+        renderer.stagePrimitive(point, {
+          marked: true,
+        });
+      }
+    });
+    renderer.stagePrimitive(newLine, {
+      marked: true
+    });
   }
 
-  ctx.lineWidth = 5 / viewportScale;
-  ctx.beginPath();
-  highlightedLinesToDraw.forEach(line => addLineToPath(line.origin, line.direction));
-  ctx.stroke();
+  renderer.draw();
 
-  const pointRadius = 5 / viewportScale;
-  ctx.fillStyle = "red";
-  ctx.beginPath();
-  pointsToDraw.forEach(p => addPointToPath(p, pointRadius));
-  ctx.fill();
-
+  /*
   ctx.strokeStyle = "darkGreen";
   ctx.lineWidth = 2 / viewportScale;
   ctx.beginPath();
@@ -150,49 +95,20 @@ function draw() {
     ctx.lineTo(P.x + f1.x, P.y + f1.y);
   });
   ctx.stroke();
-
-  ctx.fillStyle = "blue";
-  ctx.beginPath();
-  const highlightedPointRadius = pointRadius * 1.2;
-  highlightedPointsToDraw.forEach(
-    p => addPointToPath(p, highlightedPointRadius));
-  ctx.fill();
+  */
 }
 
 function redrawIf(condition) {
   needsRedraw = needsRedraw || condition;
 }
 
-function addLineToPath(O, d) {
-  let t0, t1;
-  if (Math.abs(d.x) > Math.abs(d.y)) {
-    const idx = 1 / d.x;
-    t0 = idx * (clip.x0 - O.x);
-    t1 = idx * (clip.x1 - O.x);
-  } else {
-    const idy = 1 / d.y;
-    t0 = idy * (clip.y0 - O.y);
-    t1 = idy * (clip.y1 - O.y);
-  }
-  const P0 = O.clone().addScaled(t0, d);
-  const P1 = O.clone().addScaled(t1, d);
-  ctx.moveTo(P0.x, P0.y);
-  ctx.lineTo(P1.x, P1.y);
-}
-
-function addPointToPath(pointPrimitive, radius) {
-  const p = pointPrimitive.position;
-  ctx.moveTo(p.x, p.y);
-  ctx.arc(p.x, p.y, radius, 0, 2 * Math.PI);
-}
-
 function onMouseMove(e) {
   needsRedraw = true;
   mouseWindow.set(e.offsetX, e.offsetY);
-  mouse.span(viewportOrigin, mouseWindow).div(viewportScale);
+  mouse.span(viewport.origin, mouseWindow).div(viewport.scale);
 
   if (isDraggingScene) {
-    viewportOrigin.span(dragStartWindow, mouseWindow).add(viewportOriginAtGrab);
+    viewport.origin.span(dragStartWindow, mouseWindow).add(viewportOriginAtGrab);
     needsRedraw = true;
     return;
   }
@@ -202,7 +118,7 @@ function onMouseMove(e) {
     return;
   }
 
-  const markRadiusSq = sq(10 / viewportScale);
+  const markRadiusSq = sq(10 / viewport.scale);
   redrawIf(markedPrimitives.length > 0);
   markedPrimitives.length = 0;
   stashedMarkedPrimitives = null;
@@ -225,14 +141,22 @@ function updateTool() {
   switch (tool) {
     case 'L':
       if (newLine) {
-        newLine.B = placeOrPickPoint(mouse);
+        const point1 = placeOrPickPoint(
+          mouse, newLine.point1.auxiliary ? newLine.point1 : null);
+        if (point1 != newLine.point1) {
+          console.log('recreate');
+          const oldLine = newLine;
+          newLine = new TwoPointLinePrimitive(oldLine.point0, point1);
+          oldLine.dispose();
+        }
+        newLine.applyConstraints();
         needsRedraw = true;
       }
       break;
   }
 }
 
-function placeOrPickPoint(mouse) {
+function placeOrPickPoint(mouse, existing) {
   if (
       markedPrimitives.length == 1 &&
       markedPrimitives[0] instanceof PointPrimitive) {
@@ -241,13 +165,20 @@ function placeOrPickPoint(mouse) {
       markedPrimitives.length == 2 &&
       markedPrimitives[0] instanceof CurvePrimitive &&
       markedPrimitives[1] instanceof CurvePrimitive) {
-    return new IntersectionPointPrimitive(
-      mouse, markedPrimitives[0], markedPrimitives[1]);
-  } else {
-    const point = new FreePointPrimitive(mouse);
-    if (markedPrimitives.length > 0) {
-      point.invalid = true;
+    // TODO: It is still possible to get a duplicate intersection point. We need
+    // to look globally.
+    if (
+        existing instanceof IntersectionPointPrimitive &&
+        Arrays.includesAll(existing.parents, markedPrimitives)) {
+      return existing;
+    } else {
+      return new IntersectionPointPrimitive(
+        mouse, markedPrimitives[0], markedPrimitives[1]);
     }
+  } else {
+    const point = existing && existing.tryMoveTo(mouse)
+      ? existing : new FreePointPrimitive(mouse);
+    point.setInvalid(markedPrimitives.length > 0);
     return point;
   }
 }
@@ -257,7 +188,7 @@ function onMouseDown(e) {
 
   if (pressedKeys.has(' ')) { 
     dragStartWindow = mouseWindow;
-    viewportOriginAtGrab = viewportOrigin.clone();
+    viewportOriginAtGrab = viewport.origin.clone();
     isDraggingScene = true;
     return;
   }
@@ -284,8 +215,8 @@ function onMouseUp(e) {
 
 function onWheel(e) {
   const factor = Math.pow(1.3, -e.deltaY / canvas.height);
-  viewportScale *= factor;
-  viewportOrigin.span(mouseWindow, viewportOrigin).mul(factor).add(mouseWindow);
+  viewport.scale *= factor;
+  viewport.origin.span(mouseWindow, viewport.origin).mul(factor).add(mouseWindow);
   needsRedraw = true;
 }
 
@@ -338,20 +269,20 @@ function onClick(e) {
 
     case 'L':
       if (!newLine) {
-        const A = placeOrPickPoint(mouse);
-        if (!A.invalid) {
-          const B = new FreePointPrimitive(vec2.add(A.position, new vec2(1, 1)));
-          B.invalid = true;
-          newLine = { A: A, B: B };
+        const point0 = placeOrPickPoint(mouse);
+        if (!point0.invalid) {
+          const point1 = new FreePointPrimitive(
+            vec2.add(point0.position, new vec2(1, 1)));
+          point1.setInvalid(true);
+          newLine = new TwoPointLinePrimitive(point0, point1);
         }
-      } else if (!newLine.B.invalid) {
-        if (newLine.A.auxiliary) {
-          primitives.push(newLine.A);
-        }
-        if (newLine.B.auxiliary) {
-          primitives.push(newLine.B);
-        }
-        primitives.push(new TwoPointLinePrimitive(newLine.A, newLine.B));
+      } else if (!newLine.point1.invalid) {
+        newLine.parents.forEach(point => {
+          if (point.auxiliary) {
+            primitives.push(point);
+          }
+        });
+        primitives.push(newLine);
         newLine = null;
       }
       break;
