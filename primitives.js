@@ -3,41 +3,41 @@ import { UnimplementedError, Arrays } from "/utils.js";
 
 export class Primitive {
   constructor(parents) {
-    this.auxiliary = true;
     this.parents = parents;
     this.children = [];
     this.level = 0;
     parents.forEach(parent => {
+      console.assert(!parent.isDisposed);
       parent.children.push(this);
       this.level = Math.max(this.level, parent.level + 1);
     });
   }
 
   notifyChange() {
-    if (this.changeCallback) {
-      this.changeCallback(this);
-    }
+      this._changeCallback(this);
   }
 
   dispose() {
-    if (!this.children) {
+    if (this.isDisposed) {
       throw new Error("Already disposed.");
     }
     if (this.children.length > 0) {
       throw new Error("Dispose all descendants first.");
     }
     this.parents.forEach(parent => Arrays.remove(parent.children, this));
-    delete this.children;
-    delete this.parents;
+    this.isDisposed = true;
+    this.notifyChange();
   }
 
-  setInvalid(value) {
+  setFlag(name, value) {
     if (value) {
-      this.invalid = true;
+      this[name] = true;
     } else {
-      delete this.invalid;
+      delete this[name];
     }
   }
+
+  setInvalid(value) { this.setFlag('invalid', value); }
 
   applyConstraints() { throw new UnimplementedError(); }
 
@@ -46,6 +46,192 @@ export class Primitive {
   closestPoint(_reference, _result) { throw Exception("Unimplemented"); }
 
   tryDrag(_grabPosition) { throw new UnimplementedError(); }
+}
+
+export class Primitives {
+  constructor () {
+    this._primitives = [];
+    this._nextPrimitiveId = 1;
+    this._changedPrimitives = [];
+    this._invalidatedPrimitives = [];
+    this._intersectionPoints = new Map();
+    this._changeCallback = primitive => this._onPrimitiveChange(primitive);
+  }
+
+  forEach(callback) {
+    let i = 0;
+    for (let j = 0; j < this._primitives.length; ++j) {
+      const primitive = this._primitives[j];
+      if (!primitive.isDisposed) {
+        this._primitives[i++] = primitive;
+        callback(primitive);
+      }
+    }
+    this._primitives.length = i;
+  }
+
+  createPoint(position) {
+    return this._initializePrimitive(new FreePointPrimitive(position));
+  }
+
+  /// Returns an [IntersectionPointPrimitive] based on the two given parent
+  /// primitives, or undefined if the primitives have no intersection.
+  ///
+  /// When there is already a matching existing point on record, it is returned
+  /// and no new point is instantiated.
+  ///
+  /// The result is an object with the following properties:
+  ///
+  ///   * point: [IntersectionPointPrimitive] ,
+  ///   * isExisting: boolean indicating whether the point is an existing one
+  ///     or newly created.
+  ///
+  /// In case the primitives have more than one intersection, one is picked
+  /// which is closer to the given reference [approximatePosition]. This rule is
+  /// also preserved when picking an existing point.
+  ///
+  /// It is possible that an existing intersection point is on record, even if
+  /// the parents have no intersection. It must have been created at a time when
+  /// the parents were intersecting, but now is marked as invalid. It is
+  /// debatable what to do in such situation, but the current implementation
+  /// returns `undefined`.
+  tryGetOrCreateIntersectionPoint(primitive0, primitive1, approximatePosition) {
+    console.assert(this._invalidatedPrimitives.length == 0);
+
+    const position = Primitives.intersection(
+      primitive0, primitive1, approximatePosition);
+    if (!position) {
+      return undefined;
+    }
+
+    const id = Primitives._primitivePairId(primitive0, primitive1);
+    const existing = this._intersectionPoints.get(id);
+    if (existing) {
+      const matching = existing.find(point => point.position.equals(position));
+      if (matching) {
+        return {
+          point: matching,
+          isExisting: true,
+        };
+      } 
+    }
+
+    return {
+      point: this._initializePrimitive(
+        new IntersectionPointPrimitive(primitive0, primitive1, position)),
+      isExisting: false,
+    }
+  }
+
+  createLine(point0, point1) {
+    return this._initializePrimitive(new TwoPointLinePrimitive(point0, point1));
+  }
+
+  edit(changes) {
+    console.assert(this._changedPrimitives.length == 0);
+    try {
+      changes();
+    } finally {
+      this._invalidatedPrimitives.sort((a, b) => a.level - b.level);
+      this._invalidatedPrimitives.forEach(primitive => {
+        if (!primitive.isDisposed) {
+          primitive.applyConstraints();
+        }
+      });
+      this._invalidatedPrimitives.length = 0;
+      this._changedPrimitives.length = 0;
+    }
+  }
+
+  _initializePrimitive(primitive) {
+    primitive.id = this._nextPrimitiveId++;
+    primitive._changeCallback = this._changeCallback;
+    this._primitives.push(primitive);
+    primitive.notifyChange();
+    return primitive;
+  }
+
+  _onPrimitiveChange(primitive) {
+    if (primitive.isDisposed) {
+      this._onPrimitiveDisposal(primitive);
+      return;
+    }
+    if (this._changedPrimitives.includes(primitive)) {
+      return;
+    }
+    if (this._invalidatedPrimitives.includes(primitive)) {
+      throw new Error("Changing invalidated primitive.");
+    }
+    let i = this._invalidatedPrimitives.length;
+    this._invalidatedPrimitives.push(primitive);
+    while (i < this._invalidatedPrimitives.length) {
+      const invalidated = this._invalidatedPrimitives[i++];
+      if (this._changedPrimitives.includes(invalidated)) {
+        throw new Error("Invalidating changed primitive.");
+      }
+      invalidated.children.forEach(child => {
+        if (!this._invalidatedPrimitives.includes(child)) {
+          this._invalidatedPrimitives.push(child);
+        }
+      });
+    }
+    this._changedPrimitives.push(primitive);
+  }
+
+  _onPrimitiveDisposal(primitive) {
+    if (primitive instanceof IntersectionPointPrimitive) {
+      const pairId = Primitives._primitivePairId(
+        primitive.curve0, primitive.curve1);
+      const points = this._intersectionPoints.get(pairId);
+      if (points) {
+        Arrays.remove(points, primitive);
+        if (points.length == 0) {
+          this._intersectionPoints.delete(pairId);
+        }
+      }
+    }
+  }
+
+  static intersections(primitive1, primitive2) {
+    if (primitive1 instanceof LinePrimitive) {
+      return Primitives._lineIntersections(primitive1, primitive2);
+    } else if (primitive2 instanceof LinePrimitive) {
+      return Primitives._lineIntersections(primitive2, primitive1);
+    } else {
+      return [];
+    }
+  }
+
+  static intersection(primitive0, primitive1, position) {
+    const candidates = Primitives.intersections(primitive0, primitive1);
+    if (candidates.length > 0) {
+      return Arrays.findMinBy(candidates,
+        candidate => vec2.distSq(position, candidate));
+    } else {
+      return undefined;
+    }
+  }
+
+  static _lineIntersections(line, primitive2) {
+    if (primitive2 instanceof LinePrimitive) {
+      return Primitives._lineLineIntersections(line, primitive2);
+    } else {
+      return [];
+    }
+  }
+
+  static _lineLineIntersections(line1, line2) {
+    const t = -vec2.per(vec2.span(line1.origin, line2.origin), line1.direction)
+      / vec2.per(line2.direction, line1.direction);
+    return isFinite(t) ? [line2.eval(t)] : [];
+  }
+
+  static _primitivePairId(primitive0, primitive1) {
+    const id0 = primitive0.id, id1 = primitive1.id;
+    return id0 < id1
+      ? (id0 << 16) | id1
+      : (id1 << 16) | id0;
+  }
 }
 
 export class PrimitiveDragger {
@@ -69,32 +255,6 @@ export class CurvePrimitive extends Primitive {
   }
 
   tangentAt(_position) { throw new UnimplementedError() }
-}
-
-export class Primitives {
-  static intersections(primitive1, primitive2) {
-    if (primitive1 instanceof LinePrimitive) {
-      return Primitives._lineIntersections(primitive1, primitive2);
-    } else if (primitive2 instanceof LinePrimitive) {
-      return Primitives._lineIntersections(primitive2, primitive1);
-    } else {
-      return [];
-    }
-  }
-
-  static _lineIntersections(line, primitive2) {
-    if (primitive2 instanceof LinePrimitive) {
-      return Primitives._lineLineIntersections(line, primitive2);
-    } else {
-      return [];
-    }
-  }
-
-  static _lineLineIntersections(line1, line2) {
-    const t = -vec2.per(vec2.span(line1.origin, line2.origin), line1.direction)
-      / vec2.per(line2.direction, line1.direction);
-    return isFinite(t) ? [line2.eval(t)] : [];
-  }
 }
 
 export class PointPrimitive extends Primitive {
@@ -150,20 +310,23 @@ export class FreePointPrimitive extends PointPrimitive {
 }
 
 export class IntersectionPointPrimitive extends PointPrimitive {
-  constructor(approximatePosition, curve1, curve2) {
-    super(approximatePosition, [curve1, curve2]);
+  constructor(curve0, curve1, approximatePosition) {
+    super(approximatePosition, [curve0, curve1]);
     this.applyConstraints();
   }
 
+  get curve0() { return this.parents[0]; }
+  
+  get curve1() { return this.parents[1]; }
+
   applyConstraints() {
-    const candidates = Primitives.intersections(
-      this.parents[0], this.parents[1]);
-    if (candidates.length > 0) {
-      this.position.copy(
-        Arrays.findMinBy(candidates, (P) => vec2.distSq(this.position, P)));
-      delete this.invalid;
+    const intersection = Primitives.intersection(
+      this.curve0, this.curve1, this.position);
+    if (intersection) {
+      this.position.copy(intersection);
+      this.setInvalid(false);
     } else {
-      this.invalid = true;
+      this.setInvalid(true);
     }
   }
 

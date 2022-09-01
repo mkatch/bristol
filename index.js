@@ -1,9 +1,10 @@
-import { CurvePrimitive, FreePointPrimitive, IntersectionPointPrimitive, TwoPointLinePrimitive } from '/primitives.js';
+import { Primitives, PointPrimitive, LinePrimitive } from '/primitives.js';
 import { vec2, sq } from '/math.js';
-import { PointPrimitive, LinePrimitive } from '/primitives.js';
 import { Arrays } from '/utils.js';
 import { Renderer } from '/draw.js';
 
+const primitives = new Primitives();
+const constructionProtocol = [];
 const renderer = new Renderer(canvas);
 const viewport = renderer.viewport;
 const pressedKeys = new Set();
@@ -19,14 +20,14 @@ let mouse = new vec2(0, 0);
 let clickStart = null;
 let stashedMarkedPrimitives = null;
 
-const primitives = [];
-primitives.push = function (primitive) {
-  Array.prototype.push.call(this, primitive);
-  console.assert(!primitive.changeCallback);
-  primitive.changeCallback = onPrimitiveChange;
-  delete primitive.auxiliary;
-  needsRedraw = true;
-}
+// const primitives = [];
+// primitives.push = function (primitive) {
+//   Array.prototype.push.call(this, primitive);
+//   console.assert(!primitive.changeCallback);
+//   primitive.changeCallback = onPrimitiveChange;
+//   delete primitive.auxiliary;
+//   needsRedraw = true;
+// }
 let primitiveDragger = null;
 
 window.addEventListener('resize'   , onWindowResize, false);
@@ -123,7 +124,7 @@ function onMouseMove(e) {
   markedPrimitives.length = 0;
   stashedMarkedPrimitives = null;
   primitives.forEach(primitive => {
-    if (primitive.distSq(mouse) <= markRadiusSq) {
+    if (!primitive.temporary && primitive.distSq(mouse) <= markRadiusSq) {
       markedPrimitives.push(primitive);
     }
   });
@@ -141,46 +142,58 @@ function updateTool() {
   switch (tool) {
     case 'L':
       if (newLine) {
-        const point1 = placeOrPickPoint(
-          mouse, newLine.point1.auxiliary ? newLine.point1 : null);
+        const reuse = newLine.point1.temporary ? newLine.point1 : undefined;
+        const placement = placePoint(mouse, {
+          allowInvalid: true,
+          reuse: reuse,
+        });
+        const point1 = placement.point;
         if (point1 != newLine.point1) {
-          console.log('recreate');
+          point1.setFlag('temporary', !placement.isExisting);
           const oldLine = newLine;
-          newLine = new TwoPointLinePrimitive(oldLine.point0, point1);
+          newLine = primitives.createLine(oldLine.point0, point1);
+          newLine.setFlag('temporary', true);
           oldLine.dispose();
+          if (reuse) {
+            reuse.dispose();
+          }
         }
-        newLine.applyConstraints();
-        needsRedraw = true;
       }
       break;
   }
 }
-
-function placeOrPickPoint(mouse, existing) {
+ 
+function placePoint(mouse, kwargs = {}) {
   if (
       markedPrimitives.length == 1 &&
       markedPrimitives[0] instanceof PointPrimitive) {
-    return markedPrimitives[0];
-  } else if (
-      markedPrimitives.length == 2 &&
-      markedPrimitives[0] instanceof CurvePrimitive &&
-      markedPrimitives[1] instanceof CurvePrimitive) {
-    // TODO: It is still possible to get a duplicate intersection point. We need
-    // to look globally.
-    if (
-        existing instanceof IntersectionPointPrimitive &&
-        Arrays.includesAll(existing.parents, markedPrimitives)) {
-      return existing;
-    } else {
-      return new IntersectionPointPrimitive(
-        mouse, markedPrimitives[0], markedPrimitives[1]);
-    }
-  } else {
-    const point = existing && existing.tryMoveTo(mouse)
-      ? existing : new FreePointPrimitive(mouse);
-    point.setInvalid(markedPrimitives.length > 0);
-    return point;
+      return {
+        point: markedPrimitives[0],
+        isExisting: true,
+      }
   }
+  
+  if (markedPrimitives.length == 2) {
+    const intersection = primitives.tryGetOrCreateIntersectionPoint(
+      markedPrimitives[0], markedPrimitives[1], mouse);
+    if (intersection) {
+      return intersection;
+    }
+  }
+
+  const invalid = markedPrimitives.length > 0;
+  if (invalid && !kwargs.allowInvalid) {
+    return undefined;
+  }
+
+  const point = (kwargs.reuse && kwargs.reuse.tryMoveTo(mouse))
+    ? kwargs.reuse
+    : primitives.createPoint(mouse)
+  point.setInvalid(invalid);
+  return {
+    point: point,
+    isExisting: point === kwargs.reuse,
+  };
 }
 
 function onMouseDown(e) {
@@ -261,76 +274,40 @@ function onKeyUp(e) {
 function onClick(e) {
   switch (tool) {
     case 'P':
-      const P = placeOrPickPoint(mouse);
-      if (!P.invalid && P.auxiliary) {
-        primitives.push(P);
+      const placement = placePoint(mouse);
+      if (!placement.isExisting) {
+        constructionProtocol.push(placement.point);
       }
       break;
 
     case 'L':
       if (!newLine) {
-        const point0 = placeOrPickPoint(mouse);
-        if (!point0.invalid) {
-          const point1 = new FreePointPrimitive(
+        const placement = placePoint(mouse);
+        if (placement) {
+          const point0 = placement.point;
+          point0.setFlag('temporary', !placement.isExisting);
+          const point1 = primitives.createPoint(
             vec2.add(point0.position, new vec2(1, 1)));
           point1.setInvalid(true);
-          newLine = new TwoPointLinePrimitive(point0, point1);
+          point1.setFlag('temporary', true);
+          newLine = primitives.createLine(point0, point1);
+          newLine.setFlag('temporary', true);
         }
-      } else if (!newLine.point1.invalid) {
+      } else if (!newLine.invalid) {
         newLine.parents.forEach(point => {
-          if (point.auxiliary) {
-            primitives.push(point);
+          if (point.temporary) {
+            point.setFlag('temporary', false);
+            constructionProtocol.push(point);
           }
         });
-        primitives.push(newLine);
+        newLine.setFlag('temporary', false);
+        constructionProtocol.push(newLine);
         newLine = null;
       }
       break;
   }
 }
 
-const changedPrimitives = [];
-const invalidatedPrimitives = [];
-
-function onPrimitiveChange(primitive) {
-  if (changedPrimitives.includes(primitive)) {
-    return;
-  }
-  if (invalidatedPrimitives.includes(primitive)) {
-    throw new Error("Changing invalidated primitive.");
-  }
-  let i = invalidatedPrimitives.length;
-  invalidatedPrimitives.push(primitive);
-  while (i < invalidatedPrimitives.length) {
-    const invalidated = invalidatedPrimitives[i++];
-    if (changedPrimitives.includes(invalidated)) {
-      throw new Error("Invalidating changed primitive.");
-    }
-    invalidated.children.forEach(child => {
-      if (!invalidatedPrimitives.includes(child)) {
-        invalidatedPrimitives.push(child);
-      }
-    });
-  }
-  changedPrimitives.push(primitive);
-}
-
 function userInputEventHandler(callback) {
-  return e => editPrimitives(() => callback(e));
-}
-
-function editPrimitives(callback) {
-  console.assert(changedPrimitives.length == 0);
-
-  callback();
-
-  if (changedPrimitives.length == 0) {
-    return;
-  }
-
-  invalidatedPrimitives.sort((a, b) => a.level - b.level);
-  invalidatedPrimitives.forEach(primitive => primitive.applyConstraints());
-  invalidatedPrimitives.length = 0;
-  changedPrimitives.length = 0;
-  needsRedraw = true;
+  return e => primitives.edit(() => callback(e));
 }
