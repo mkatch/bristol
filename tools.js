@@ -90,12 +90,6 @@ class Tool {
 
   onSelectionChange() { this.onMouseMove(); }
 
-  stageDrawing(renderer) {
-    for (const primitive of this.ownPrimitives) {
-      renderer.stagePrimitive(primitive);
-    }
-  }
-
   _markOwn(primitive) {
     this.ownPrimitives.add(primitive);
     return primitive;
@@ -128,7 +122,7 @@ export class LineTool extends Tool {
   onMouseClick() {
     if (!this.point0) {
       this.point0 = this.placePoint(this.ctx.mousePosition);
-    } else if (this.line && !this.line.invalid) {
+    } else if (this.line && !this.point1.invalid) {
       this.commit();
     }
   }

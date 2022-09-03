@@ -66,8 +66,6 @@ function draw() {
     });
   }
 
-  tool.stageDrawing(renderer);
-
   renderer.draw();
 
   /*
