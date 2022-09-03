@@ -130,6 +130,10 @@ export class Primitives {
     return this._initializePrimitive(new TwoPointLinePrimitive(point0, point1));
   }
 
+  createCircle(point0, point1) {
+    return this._initializePrimitive(new CirclePrimitive(point0, point1));
+  }
+
   edit(changes) {
     console.assert(this._changedPrimitives.length == 0);
     try {
@@ -427,5 +431,31 @@ export class TwoPointLinePrimitive extends LinePrimitive {
     } else if (dragger1) {
       return new PivotPointPrimitiveDragger(this.point0, this.point1);
     }
+  }
+}
+
+export class CirclePrimitive extends CurvePrimitive {
+  constructor(centerPoint, edgePoint) {
+    super([centerPoint, edgePoint]);
+    this.center = new vec2(0, 0);
+    this.applyConstraints();
+  }
+
+  get centerPoint() { return this.parents[0]; }
+
+  get edgePoint() { return this.parents[1]; }
+
+  distSq(position) {
+    const d = vec2.dist(this.center, position);
+    return sq(d - this.radius);
+  }
+
+  applyConstraints() {
+    this.center.copy(this.centerPoint.position);
+    this.radius = vec2.dist(this.center, this.edgePoint.position);
+  }
+
+  tryDrag(position) {
+    return null;
   }
 }

@@ -2,7 +2,7 @@ import { Primitives, PointPrimitive } from '/primitives.js';
 import { vec2, sq } from '/math.js';
 import { installUtils } from '/utils.js';
 import { Renderer } from '/draw.js';
-import { ToolContext, PointTool, LineTool } from '/tools.js';
+import { CircleTool, LineTool, PointTool, ToolContext } from '/tools.js';
 
 installUtils();
 
@@ -22,6 +22,7 @@ const toolContext = new ToolContext({
 });
 const pointTool = new PointTool(toolContext);
 const lineTool = new LineTool(toolContext);
+const circleTool = new CircleTool(toolContext);
 let tool = pointTool;
 let needsRedraw = true;
 let dragStartWindow = null;
@@ -175,6 +176,11 @@ function onKeyDown(e) {
     case 'l':
     case 'L':
       setTool(lineTool);
+      break;
+
+    case 'o':
+    case 'O':
+      setTool(circleTool);
       break;
 
     case 'Tab':

@@ -1,5 +1,5 @@
 import { Primitives, PointPrimitive } from '/primitives.js';
-import { checkDefined } from '/utils.js';
+import { checkDefined, UnimplementedError } from '/utils.js';
 
 export class ToolContext {
   constructor (kwargs) {
@@ -52,6 +52,10 @@ class Tool {
 
   createLine(point0, point1) {
     return this._markOwn(this.ctx.primitives.createLine(point0, point1));
+  }
+
+  createCircle(point0, point1) {
+    return this._markOwn(this.ctx.primitives.createCircle(point0, point1));
   }
 
   placePoint(position, kwargs = {}) {
@@ -107,54 +111,76 @@ export class PointTool extends Tool {
   }
 }
 
-export class LineTool extends Tool {
+class _TwoPointTool extends Tool {
   constructor(context) {
     super(context);
   }
 
   reset() {
     super.reset();
-    this.point0 = null;
-    this.point1 = null;
-    this.line = null;
+    this._point0 = null;
+    this._point1 = null;
+    this._primitive = null;
   }
 
   onMouseClick() {
-    if (!this.point0) {
-      this.point0 = this.placePoint(this.ctx.mousePosition);
-    } else if (this.line && !this.point1.invalid) {
+    if (!this._point0) {
+      this._point0 = this.placePoint(this.ctx.mousePosition);
+    } else if (this._primitive && !this._point1.invalid) {
       this.commit();
     }
   }
 
   onMouseMove() {
-    if (!this.point0) {
+    if (!this._point0) {
       return;
     }
 
     const point1 = this.placePoint(this.ctx.mousePosition, {
       allowInvalid: true,
-      reuse: this.owns(this.point1) ? this.point1 : undefined,
+      reuse: this.owns(this._point1) ? this._point1 : undefined,
     });
 
-    if (point1 === this.point1) {
+    if (point1 === this._point1) {
       return;
     }
 
-    if (point1 === this.point0) {
-      this.discard(this.point1, this.line);
-      this.point1 = null;
-      this.line = null;
+    if (point1 === this._point0) {
+      this.discard(this._point1, this._primitive);
+      this._point1 = null;
+      this._primitive = null;
       return;
     }
 
-    if (this.line) {
-      this.discard(this.line, this.point1);
+    if (this._primitive) {
+      this.discard(this._primitive, this._point1);
     }
-    this.point1 = point1;
+    this._point1 = point1;
 
-    this.line = this.createLine(this.point0, this.point1);
-    this.point1.isSelectable = !this.owns(this.point1);
-    this.line.isSelectable = false;
+    this._primitive = this.createPrimitive(this._point0, this._point1);
+    this._point1.isSelectable = !this.owns(this._point1);
+    this._primitive.isSelectable = false;
+  }
+
+  createPrimitive(_point0, _point1) { throw new UnimplementedError(); }
+}
+
+export class LineTool extends _TwoPointTool {
+  constructor(ctx) {
+    super(ctx);
+  }
+
+  createPrimitive(point0, point1) {
+    return this.createLine(point0, point1);
+  }
+}
+
+export class CircleTool extends _TwoPointTool {
+  constructor(ctx) {
+    super(ctx);
+  }
+
+  createPrimitive(point0, point1) {
+    return this.createCircle(point0, point1);
   }
 }

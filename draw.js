@@ -1,5 +1,5 @@
 import { vec2 } from "/math.js";
-import { LinePrimitive, PointPrimitive, IntersectionPointPrimitive } from "/primitives.js";
+import { CirclePrimitive, IntersectionPointPrimitive, LinePrimitive, PointPrimitive,  } from "/primitives.js";
 
 class Viewport {
   constructor () {
@@ -17,6 +17,8 @@ export class Renderer {
     this._markedPoints = [];
     this._lines = [];
     this._markedLines = [];
+    this._circles = [];
+    this._markedCircles = [];
     this._ctx = canvas.getContext('2d');
   }
 
@@ -35,6 +37,11 @@ export class Renderer {
       if (args.marked) {
         this._markedLines.push(primitive);
       }
+    } else if (primitive instanceof CirclePrimitive) {
+      this._circles.push(primitive);
+      if (args.marked) {
+        this._markedCircles.push(primitive);
+      } 
     } else {
       throw new Error("Unsupported primitive type "
         + primitive.prototype.constructor.name);
@@ -56,9 +63,15 @@ export class Renderer {
     ctx.strokeStyle = "grey";
     ctx.lineWidth = 1 * px;
     ctx.beginPath();
-    this._lines.forEach(line => this._addLineToPath(line));
+    for (const line of this._lines) {
+      this._addLineToPath(line);
+    }
+    for (const circle of this._circles) {
+      this._addCircleToPath(circle);
+    }
     ctx.stroke();
     this._lines.length = 0;
+    this._circles.length = 0;
 
     ctx.fillStyle = "red";
     ctx.beginPath();
@@ -73,13 +86,22 @@ export class Renderer {
     ctx.fill();
     this._intersectionPoints.length = 0;
 
+    ctx.fillStyle = null;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
     ctx.lineWidth = 4 * px;
-    this._markedLines.forEach(line => this._addLineToPath(line));
+    ctx.beginPath();
+    for (const line of this._markedLines) {
+      this._addLineToPath(line);
+    }
+    for (const circle of this._markedCircles) {
+      this._addCircleToPath(circle);
+    }
     ctx.stroke();
     this._markedLines.length = 0;
+    this._markedCircles.length = 0;
 
     ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.beginPath();
     this._markedPoints.forEach(point => this._addPointToPath(point, 6 * px));
     ctx.fill();
     this._markedPoints.length = 0;
@@ -118,5 +140,12 @@ export class Renderer {
     const P1 = O.clone().addScaled(t1, d);
     this._ctx.moveTo(P0.x, P0.y);
     this._ctx.lineTo(P1.x, P1.y);
+  }
+
+  _addCircleToPath(circle) {
+    this._ctx.moveTo(circle.center.x + circle.radius, circle.center.y);
+    this._ctx.arc(
+      circle.center.x, circle.center.y, circle.radius,
+      0, 2 * Math.PI);
   }
 }
