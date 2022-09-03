@@ -7,11 +7,11 @@ export class Primitive {
     this.parents = parents;
     this.children = [];
     this.level = 0;
-    parents.forEach(parent => {
+    for (const parent of parents) {
       console.assert(!parent.isDisposed);
       parent.children.push(this);
       this.level = Math.max(this.level, parent.level + 1);
-    });
+    }
   }
 
   notifyChange() {
@@ -25,7 +25,9 @@ export class Primitive {
     if (this.children.length > 0) {
       throw new Error("Dispose all descendants first.");
     }
-    this.parents.forEach(parent => parent.children.remove(this));
+    for (const parent of this.parents) {
+      parent.children.remove(this)
+    }
     this.isDisposed = true;
     this.notifyChange();
   }
@@ -59,17 +61,13 @@ export class Primitives {
     this._changeCallback = primitive => this._onPrimitiveChange(primitive);
   }
 
-  [Symbol.iterator]() {
-    return this._primitives[Symbol.iterator]();
-  }
-
-  forEach(callback) {
+  *[Symbol.iterator]() {
     let i = 0;
     for (let j = 0; j < this._primitives.length; ++j) {
       const primitive = this._primitives[j];
       if (!primitive.isDisposed) {
         this._primitives[i++] = primitive;
-        callback(primitive);
+        yield primitive;
       }
     }
     this._primitives.length = i;
@@ -137,12 +135,12 @@ export class Primitives {
     try {
       changes();
     } finally {
-      this._invalidatedPrimitives.sort((a, b) => a.level - b.level);
-      this._invalidatedPrimitives.forEach(primitive => {
+      Primitives.sortByLevelAscending(this._invalidatedPrimitives);
+      for (const primitive of this._invalidatedPrimitives) {
         if (!primitive.isDisposed) {
           primitive.applyConstraints();
         }
-      });
+      }
       this._invalidatedPrimitives.length = 0;
       this._changedPrimitives.length = 0;
     }
@@ -174,11 +172,11 @@ export class Primitives {
       if (this._changedPrimitives.includes(invalidated)) {
         throw new Error("Invalidating changed primitive.");
       }
-      invalidated.children.forEach(child => {
+      for (const child of invalidated.children) {
         if (!this._invalidatedPrimitives.includes(child)) {
           this._invalidatedPrimitives.push(child);
         }
-      });
+      }
     }
     this._changedPrimitives.push(primitive);
   }
@@ -264,7 +262,9 @@ class CompoundPrimitiveDragger extends PrimitiveDragger {
   }
 
   dragTo(position) {
-    this.draggers.forEach(dragger => dragger.dragTo(position));
+    for (const dragger of this.draggers) {
+      dragger.dragTo(position);
+    }
   }
 }
 

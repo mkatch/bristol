@@ -16,6 +16,10 @@ class Tool {
     this.ownPrimitives = new Set();
   }
 
+  get isInProgress() {
+    return this.ownPrimitives.size > 0;
+  }
+
   reset() {
     Primitives.dispose(this.ownPrimitives);
     this.ownPrimitives.clear();
@@ -87,7 +91,9 @@ class Tool {
   onSelectionChange() { this.onMouseMove(); }
 
   stageDrawing(renderer) {
-    this.ownPrimitives.forEach(primitive => renderer.stagePrimitive(primitive));
+    for (const primitive of this.ownPrimitives) {
+      renderer.stagePrimitive(primitive);
+    }
   }
 
   _markOwn(primitive) {
