@@ -115,3 +115,21 @@ export function sq(x) {
 export function signnz(x) {
   return x >= 0 ? 1 : -1;
 }
+
+export function solveQuadratic(a, b, c) {
+  // TODO: Below is a 5 minute effort with a school implementation. It has a lot
+  // of problems with stability and robustness.
+  const delta = b * b - 4 * a * c;
+  console.log(delta);
+  if (delta < 0) {
+    return [];
+  } else if (delta == 0) {
+    return [-b / (2 * a)];
+  } else {
+    const sqrtDelta = Math.sqrt(delta);
+    return [
+      (-b + sqrtDelta) / (2 * a),
+      (-b - sqrtDelta) / (2 * a),
+    ];
+  }
+}

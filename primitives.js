@@ -1,4 +1,4 @@
-import { vec2, sq, signnz } from "/math.js";
+import { solveQuadratic, signnz, sq, vec2 } from "/math.js";
 import { UnimplementedError } from "/utils.js";
 
 export class Primitive {
@@ -236,6 +236,8 @@ export class Primitives {
   static _lineIntersections(line, primitive2) {
     if (primitive2 instanceof LinePrimitive) {
       return Primitives._lineLineIntersections(line, primitive2);
+    } else if (primitive2 instanceof CirclePrimitive) {
+      return Primitives._lineCircleIntersections(line, primitive2);
     } else {
       return [];
     }
@@ -245,6 +247,14 @@ export class Primitives {
     const t = -vec2.per(vec2.span(line1.origin, line2.origin), line1.direction)
       / vec2.per(line2.direction, line1.direction);
     return isFinite(t) ? [line2.eval(t)] : [];
+  }
+
+  static _lineCircleIntersections(line, circle) {
+    const offset = vec2.span(circle.center, line.origin);
+    const a = line.direction.lenSq();
+    const b = 2 * vec2.dot(offset, line.direction);
+    const c = offset.lenSq() - sq(circle.radius);
+    return solveQuadratic(a, b, c).map(t => line.eval(t));
   }
 
   static _primitivePairId(primitive0, primitive1) {
