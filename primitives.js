@@ -1,5 +1,5 @@
 import { vec2, sq, signnz } from "/math.js";
-import { UnimplementedError, Arrays } from "/utils.js";
+import { UnimplementedError } from "/utils.js";
 
 export class Primitive {
   constructor(parents) {
@@ -25,7 +25,7 @@ export class Primitive {
     if (this.children.length > 0) {
       throw new Error("Dispose all descendants first.");
     }
-    this.parents.forEach(parent => Arrays.remove(parent.children, this));
+    this.parents.forEach(parent => parent.children.remove(this));
     this.isDisposed = true;
     this.notifyChange();
   }
@@ -189,7 +189,7 @@ export class Primitives {
         primitive.curve0, primitive.curve1);
       const points = this._intersectionPoints.get(pairId);
       if (points) {
-        Arrays.remove(points, primitive);
+        points.remove(primitive);
         if (points.length == 0) {
           this._intersectionPoints.delete(pairId);
         }
@@ -224,7 +224,7 @@ export class Primitives {
   static intersection(primitive0, primitive1, position) {
     const candidates = Primitives.intersections(primitive0, primitive1);
     if (candidates.length > 0) {
-      return Arrays.findMinBy(candidates,
+      return candidates.findMinBy(
         candidate => vec2.distSq(position, candidate));
     } else {
       return undefined;

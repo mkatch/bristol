@@ -1,5 +1,5 @@
 import { Primitives, PointPrimitive } from '/primitives.js';
-import { Sets, checkDefined } from '/utils.js';
+import { checkDefined } from '/utils.js';
 
 export class ToolContext {
   constructor (kwargs) {
@@ -27,7 +27,7 @@ class Tool {
 
   discard(...primitives) {
     primitives = primitives.filter(primitive => this.owns(primitive));
-    Sets.deleteAll(this.ownPrimitives, primitives);
+    this.ownPrimitives.deleteAll(primitives);
     Primitives.dispose(primitives);
   }
 

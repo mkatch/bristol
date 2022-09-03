@@ -1,8 +1,10 @@
 import { Primitives, PointPrimitive } from '/primitives.js';
 import { vec2, sq } from '/math.js';
-import { Arrays } from '/utils.js';
+import { installUtils } from '/utils.js';
 import { Renderer } from '/draw.js';
 import { ToolContext, PointTool, LineTool } from '/tools.js';
+
+installUtils();
 
 const primitives = new Primitives();
 const constructionProtocol = [];
@@ -121,8 +123,7 @@ function onMouseMove(e) {
     }
   }
   if (markedPrimitives.some(primitive => primitive instanceof PointPrimitive)) {
-    Arrays.retainOnly(
-      markedPrimitives,
+    markedPrimitives.retainOnly(
       primitive => primitive instanceof PointPrimitive);
   }
 

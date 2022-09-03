@@ -15,60 +15,62 @@ export class UnimplementedError extends Error {
   }
 }
 
-export class Arrays {
-  static retainOnly(xs, predicate) {
-    let i = 0;
-    for (let j = 0; j < xs.length; ++j) {
-      if (predicate(xs[j])) {
-        xs[i++] = xs[j];
+export function installUtils() {
+  Object.assign(Array.prototype, {
+    retainOnly(predicate) {
+      let i = 0;
+      for (let j = 0; j < this.length; ++j) {
+        if (predicate(this[j])) {
+          this[i++] = this[j];
+        }
       }
-    }
-    xs.length = i;
-  }
+      this.length = i;
+    },
 
-  static findMinBy(xs, valueFn) {
-    let bestX = xs[0];
-    let minValue = valueFn(bestX);
-    for (let i = 1; i < xs.length; ++i) {
-      const x = xs[i];
-      const value = valueFn(x);
-      if (value < minValue) {
-        minValue = value;
-        bestX = x;
+    findMinBy(valueFn) {
+      let bestItem = this[0];
+      let minValue = valueFn(bestItem);
+      for (let i = 1; i < this.length; ++i) {
+        const item = this[i];
+        const value = valueFn(item);
+        if (value < minValue) {
+          minValue = value;
+          bestItem = item;
+        }
       }
-    }
-    return bestX;
-  }
+      return bestItem;
+    },
 
-  static includesAny(xs, ys) {
-    return ys.some(y => xs.includes(y));
-  }
+    includesAny(items) {
+      return items.some(item => this.includes(item));
+    },
 
-  static remove(xs, x) {
-    const i = xs.indexOf(x);
-    if (i >= 0) {
-      xs.splice(i, 1);
-      return true;
-    } else {
-      return false;
-    }
-  }
+    remove(item) {
+      const i = this.indexOf(item);
+      if (i >= 0) {
+        this.splice(i, 1);
+        return true;
+      } else {
+        return false;
+      }
+    },
 
-  static pop(xs) {
-    xs.splice(xs.length - 1, 1);
-  }
+    pop() {
+      this.splice(this.length - 1, 1);
+    },
 
-  static includesAll(xs, ys) {
-    return ys.every(y => xs.includes(y));
-  }
-}
+    includesAll(items) {
+      return items.every(item => this.includes(y));
+    },
+  });
 
-export class Sets {
-  static deleteAll(xs, ys) {
-    for (const y of ys) {
-      xs.delete(y);
-    }
-  }
+  Object.assign(Set.prototype, {
+    deleteAll(items) {
+      for (const item of items) {
+        this.delete(item);
+      }
+    },
+  });
 }
 
 // export class Disposable {
