@@ -3,6 +3,7 @@ import { UnimplementedError, Arrays } from "/utils.js";
 
 export class Primitive {
   constructor(parents) {
+    this.isSelectable = true;
     this.parents = parents;
     this.children = [];
     this.level = 0;
@@ -56,6 +57,10 @@ export class Primitives {
     this._invalidatedPrimitives = [];
     this._intersectionPoints = new Map();
     this._changeCallback = primitive => this._onPrimitiveChange(primitive);
+  }
+
+  [Symbol.iterator]() {
+    return this._primitives[Symbol.iterator]();
   }
 
   forEach(callback) {
@@ -189,6 +194,20 @@ export class Primitives {
           this._intersectionPoints.delete(pairId);
         }
       }
+    }
+  }
+
+  static sortByLevelAscending(primitives) {
+    return primitives.sort((a, b) => a.level - b.level);
+  }
+
+  static sortByLevelDescending(primitives) {
+    return primitives.sort((a, b) => b.level - a.level);
+  }
+
+  static dispose(primitives) {
+    for (const primitive of Primitives.sortByLevelDescending([...primitives])) {
+      primitive.dispose();
     }
   }
 

@@ -20,7 +20,7 @@ export class Renderer {
     this._ctx = canvas.getContext('2d');
   }
 
-  stagePrimitive(primitive, args) {
+  stagePrimitive(primitive, args = {}) {
     if (primitive instanceof PointPrimitive) {
       if (primitive instanceof IntersectionPointPrimitive) {
         this._intersectionPoints.push(primitive);

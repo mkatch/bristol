@@ -1,7 +1,8 @@
-import { Primitives, PointPrimitive, LinePrimitive } from '/primitives.js';
+import { Primitives, PointPrimitive } from '/primitives.js';
 import { vec2, sq } from '/math.js';
 import { Arrays } from '/utils.js';
 import { Renderer } from '/draw.js';
+import { ToolContext, PointTool, LineTool } from '/tools.js';
 
 const primitives = new Primitives();
 const constructionProtocol = [];
@@ -9,14 +10,21 @@ const renderer = new Renderer(canvas);
 const viewport = renderer.viewport;
 const pressedKeys = new Set();
 const markedPrimitives = [];
+const mouseWindow = new vec2(0, 0);
+const mouse = new vec2(0, 0);
+const toolContext = new ToolContext({
+  primitives: primitives,
+  markedPrimitives: markedPrimitives,
+  constructionProtocol: constructionProtocol,
+  mousePosition: mouse,
+});
+const pointTool = new PointTool(toolContext);
+const lineTool = new LineTool(toolContext);
+let tool = pointTool;
 let needsRedraw = true;
 let dragStartWindow = null;
 let viewportOriginAtGrab = null;
 let isDraggingScene = false;
-let tool = 'P';
-let newLine = null;
-let mouseWindow = new vec2(0, 0);
-let mouse = new vec2(0, 0);
 let clickStart = null;
 let stashedMarkedPrimitives = null;
 
@@ -64,18 +72,7 @@ function draw() {
     }
   ));
 
-  if (newLine) {
-    newLine.parents.forEach(point => {
-      if (point.auxiliary) {
-        renderer.stagePrimitive(point, {
-          marked: true,
-        });
-      }
-    });
-    renderer.stagePrimitive(newLine, {
-      marked: true
-    });
-  }
+  tool.stageDrawing(renderer);
 
   renderer.draw();
 
@@ -99,10 +96,6 @@ function draw() {
   */
 }
 
-function redrawIf(condition) {
-  needsRedraw = needsRedraw || condition;
-}
-
 function onMouseMove(e) {
   needsRedraw = true;
   mouseWindow.set(e.offsetX, e.offsetY);
@@ -120,80 +113,20 @@ function onMouseMove(e) {
   }
 
   const markRadiusSq = sq(10 / viewport.scale);
-  redrawIf(markedPrimitives.length > 0);
   markedPrimitives.length = 0;
   stashedMarkedPrimitives = null;
-  primitives.forEach(primitive => {
-    if (!primitive.temporary && primitive.distSq(mouse) <= markRadiusSq) {
+  for (const primitive of primitives) {
+    if (primitive.isSelectable && primitive.distSq(mouse) <= markRadiusSq) {
       markedPrimitives.push(primitive);
     }
-  });
+  }
   if (markedPrimitives.some(primitive => primitive instanceof PointPrimitive)) {
     Arrays.retainOnly(
       markedPrimitives,
       primitive => primitive instanceof PointPrimitive);
   }
-  redrawIf(markedPrimitives.length > 0);
 
-  updateTool();
-}
-
-function updateTool() {
-  switch (tool) {
-    case 'L':
-      if (newLine) {
-        const reuse = newLine.point1.temporary ? newLine.point1 : undefined;
-        const placement = placePoint(mouse, {
-          allowInvalid: true,
-          reuse: reuse,
-        });
-        const point1 = placement.point;
-        if (point1 != newLine.point1) {
-          point1.setFlag('temporary', !placement.isExisting);
-          const oldLine = newLine;
-          newLine = primitives.createLine(oldLine.point0, point1);
-          newLine.setFlag('temporary', true);
-          oldLine.dispose();
-          if (reuse) {
-            reuse.dispose();
-          }
-        }
-      }
-      break;
-  }
-}
- 
-function placePoint(mouse, kwargs = {}) {
-  if (
-      markedPrimitives.length == 1 &&
-      markedPrimitives[0] instanceof PointPrimitive) {
-      return {
-        point: markedPrimitives[0],
-        isExisting: true,
-      }
-  }
-  
-  if (markedPrimitives.length == 2) {
-    const intersection = primitives.tryGetOrCreateIntersectionPoint(
-      markedPrimitives[0], markedPrimitives[1], mouse);
-    if (intersection) {
-      return intersection;
-    }
-  }
-
-  const invalid = markedPrimitives.length > 0;
-  if (invalid && !kwargs.allowInvalid) {
-    return undefined;
-  }
-
-  const point = (kwargs.reuse && kwargs.reuse.tryMoveTo(mouse))
-    ? kwargs.reuse
-    : primitives.createPoint(mouse)
-  point.setInvalid(invalid);
-  return {
-    point: point,
-    isExisting: point === kwargs.reuse,
-  };
+  tool.onMouseMove();
 }
 
 function onMouseDown(e) {
@@ -214,7 +147,7 @@ function onMouseDown(e) {
 }
 
 function isBuilding() {
-  return (tool == 'L' && newLine);
+  return tool.ownPrimitives.size > 0;
 }
 
 function onMouseUp(e) {
@@ -222,7 +155,7 @@ function onMouseUp(e) {
   primitiveDragger = null;
 
   if (clickStart && vec2.distSq(clickStart, mouseWindow) < 5) {
-    onClick(e);
+    tool.onMouseClick();
   }
 }
 
@@ -230,7 +163,15 @@ function onWheel(e) {
   const factor = Math.pow(1.3, -e.deltaY / canvas.height);
   viewport.scale *= factor;
   viewport.origin.span(mouseWindow, viewport.origin).mul(factor).add(mouseWindow);
-  needsRedraw = true;
+}
+
+function setTool(newTool) {
+  if (newTool === tool) {
+    return;
+  }
+  tool.reset();
+  tool = newTool;
+  tool.reset();
 }
 
 function onKeyDown(e) {
@@ -239,12 +180,12 @@ function onKeyDown(e) {
   switch (e.key) {
     case 'p':
     case 'P':
-      tool = 'P';
+      setTool(pointTool);
       break;
 
     case 'l':
     case 'L':
-      tool = 'L';
+      setTool(lineTool);
       break;
 
     case 'Tab':
@@ -259,8 +200,7 @@ function onKeyDown(e) {
           markedPrimitives.length = 0;
           markedPrimitives.push(stashedMarkedPrimitives[i]);
         }
-        updateTool();
-        needsRedraw = true;
+        tool.onSelectionChange();
       }
       e.preventDefault();
       break;
@@ -271,43 +211,9 @@ function onKeyUp(e) {
   pressedKeys.delete(e.key);
 }
 
-function onClick(e) {
-  switch (tool) {
-    case 'P':
-      const placement = placePoint(mouse);
-      if (!placement.isExisting) {
-        constructionProtocol.push(placement.point);
-      }
-      break;
-
-    case 'L':
-      if (!newLine) {
-        const placement = placePoint(mouse);
-        if (placement) {
-          const point0 = placement.point;
-          point0.setFlag('temporary', !placement.isExisting);
-          const point1 = primitives.createPoint(
-            vec2.add(point0.position, new vec2(1, 1)));
-          point1.setInvalid(true);
-          point1.setFlag('temporary', true);
-          newLine = primitives.createLine(point0, point1);
-          newLine.setFlag('temporary', true);
-        }
-      } else if (!newLine.invalid) {
-        newLine.parents.forEach(point => {
-          if (point.temporary) {
-            point.setFlag('temporary', false);
-            constructionProtocol.push(point);
-          }
-        });
-        newLine.setFlag('temporary', false);
-        constructionProtocol.push(newLine);
-        newLine = null;
-      }
-      break;
-  }
-}
-
 function userInputEventHandler(callback) {
-  return e => primitives.edit(() => callback(e));
+  return e => primitives.edit(() => {
+    callback(e);
+    needsRedraw = true;
+  });
 }

@@ -1,7 +1,6 @@
-function requireNamedArgument(name, args) {
-  const value = args[name];
+export function checkDefined(value) {
   if (value === undefined) {
-    throw new Error("'" + name + "' is required.");
+    throw new Error("Required value.");
   }
   return value;
 }
@@ -61,6 +60,14 @@ export class Arrays {
 
   static includesAll(xs, ys) {
     return ys.every(y => xs.includes(y));
+  }
+}
+
+export class Sets {
+  static deleteAll(xs, ys) {
+    for (const y of ys) {
+      xs.delete(y);
+    }
   }
 }
 
