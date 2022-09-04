@@ -151,7 +151,6 @@ export function solveQuadratic(a, b, c) {
   // TODO: Below is a 5 minute effort with a school implementation. It has a lot
   // of problems with stability and robustness.
   const delta = b * b - 4 * a * c;
-  console.log(delta);
   if (delta < 0) {
     return [];
   } else if (delta == 0) {

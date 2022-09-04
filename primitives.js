@@ -1,4 +1,4 @@
-import { solveQuadratic, signnz, sq, vec2 } from "/math.js";
+import { Geometry, signnz, sq, vec2 } from "/math.js";
 import { UnimplementedError } from "/utils.js";
 
 export class Primitive {
@@ -213,11 +213,11 @@ export class Primitives {
     }
   }
 
-  static intersections(primitive1, primitive2) {
-    if (primitive1 instanceof LinePrimitive) {
-      return Primitives._lineIntersections(primitive1, primitive2);
-    } else if (primitive2 instanceof LinePrimitive) {
-      return Primitives._lineIntersections(primitive2, primitive1);
+  static intersections(primitive0, primitive1) {
+    if (primitive0 instanceof LinePrimitive) {
+      return Primitives._lineIntersections(primitive0, primitive1);
+    } else if (primitive0 instanceof CirclePrimitive) {
+      return Primitives._circleIntersections(primitive0, primitive1);
     } else {
       return [];
     }
@@ -233,28 +233,45 @@ export class Primitives {
     }
   }
 
-  static _lineIntersections(line, primitive2) {
-    if (primitive2 instanceof LinePrimitive) {
-      return Primitives._lineLineIntersections(line, primitive2);
-    } else if (primitive2 instanceof CirclePrimitive) {
-      return Primitives._lineCircleIntersections(line, primitive2);
+  static _lineIntersections(line, primitive) {
+    if (primitive instanceof LinePrimitive) {
+      return Primitives._lineLineIntersections(line, primitive);
+    } else if (primitive instanceof CirclePrimitive) {
+      return Primitives._lineCircleIntersections(line, primitive);
     } else {
       return [];
     }
   }
 
-  static _lineLineIntersections(line1, line2) {
-    const t = -vec2.per(vec2.span(line1.origin, line2.origin), line1.direction)
-      / vec2.per(line2.direction, line1.direction);
-    return isFinite(t) ? [line2.eval(t)] : [];
+  static _circleIntersections(circle, primitive) {
+    if (primitive instanceof LinePrimitive) {
+      return Primitives._lineCircleIntersections(primitive, circle);
+    } else if (primitive instanceof CirclePrimitive) {
+      return Primitives._circleCircleIntersections(circle, primitive);
+    } else {
+      return [];
+    }
+  }
+
+  static _lineLineIntersections(line0, line1) {
+    return Geometry.lineLineIntersections(
+      line0.origin, line0.direction,
+      line1.origin, line1.direction,
+    );
   }
 
   static _lineCircleIntersections(line, circle) {
-    const offset = vec2.span(circle.center, line.origin);
-    const a = line.direction.lenSq();
-    const b = 2 * vec2.dot(offset, line.direction);
-    const c = offset.lenSq() - sq(circle.radius);
-    return solveQuadratic(a, b, c).map(t => line.eval(t));
+    return Geometry.lineCircleIntersections(
+      line.origin, line.direction,
+      circle.center, circle.radius,
+    );
+  }
+
+  static _circleCircleIntersections(circle0, circle1) {
+    return Geometry.circleCircleIntersections(
+      circle0.center, circle0.radius,
+      circle1.center, circle1.radius,
+    );
   }
 
   static _primitivePairId(primitive0, primitive1) {
@@ -440,6 +457,8 @@ export class TwoPointLinePrimitive extends LinePrimitive {
       return new PivotPointPrimitiveDragger(this.point1, this.point0);
     } else if (dragger1) {
       return new PivotPointPrimitiveDragger(this.point0, this.point1);
+    } else {
+      return undefined;
     }
   }
 }
@@ -466,6 +485,32 @@ export class CirclePrimitive extends CurvePrimitive {
   }
 
   tryDrag(position) {
-    return null;
+    const centerDragger = this.centerPoint.tryDrag(position);
+    const edgeDragger = this.edgePoint.tryDrag(position);
+    if (centerDragger && edgeDragger) {
+      return new CompoundPrimitiveDragger([centerDragger, edgeDragger]);
+    } else if (edgeDragger) {
+      return new CircleEdgePrimitiveDragger(this.centerPoint, this.edgePoint);;
+    } else {
+      return undefined;
+    }
+  }
+}
+
+class CircleEdgePrimitiveDragger extends PrimitiveDragger {
+  constructor(centerPoint, edgePoint) {
+    super();
+    this.centerPoint = centerPoint;
+    this.edgePoint = edgePoint;
+    this.rayDirection =
+      vec2.span(centerPoint.position, edgePoint.position).normalize();
+  }
+
+  dragTo(position) {
+    const radius = vec2.dist(this.centerPoint.position, position);
+    this.edgePoint.position
+      .copy(this.centerPoint.position)
+      .addScaled(radius, this.rayDirection);
+    this.edgePoint.notifyChange();
   }
 }
