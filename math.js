@@ -108,6 +108,37 @@ export class vec2 {
   }
 }
 
+export class Geometry {
+  static lineLineIntersections(P0, d0, P1, d1) {
+    const t = vec2.per(vec2.span(P0, P1), d0) / vec2.per(d0, d1);
+    return isFinite(t) ? [P1.clone().addScaled(t, d1)] : [];
+  }
+
+  static lineCircleIntersections(P, d, C, r) {
+    const u = vec2.span(C, P);
+    const a = d.lenSq();
+    const b = 2 * vec2.dot(u, d);
+    const c = u.lenSq() - r * r;
+    return solveQuadratic(a, b, c).map(t => P.clone().addScaled(t, d));
+  }
+
+  static circleCircleIntersections(C0, r0, C1, r1) {
+    let C, R, d, r;
+    if (r0 >= r1) {
+      C = C0, R = r0;
+      d = vec2.span(C0, C1), r = r1;
+    } else {
+      C = C1, R = r1;
+      d = vec2.span(C1, C0), r = r0;
+    }
+    const dSq = d.lenSq();
+    const t = ((dSq + R * R) - r * r) / (2 * dSq);
+    const P = C.clone().addScaled(t, d);
+    // Lazy. Could be optimized but good enough for now.
+    return Geometry.lineCircleIntersections(P, vec2.rhp(d), C, R);
+  }
+}
+
 export function sq(x) {
   return x * x;
 }
