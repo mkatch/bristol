@@ -65,6 +65,12 @@ export function installUtils() {
   });
 
   Object.assign(Set.prototype, {
+    addAll(items) {
+      for (const item of items) {
+        this.add(item);
+      }
+    },
+
     deleteAll(items) {
       for (const item of items) {
         this.delete(item);

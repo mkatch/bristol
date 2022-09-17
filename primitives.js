@@ -40,13 +40,30 @@ export class Primitive {
     }
   }
 
+  dependsOn(other) {
+    const descendants = new Set();
+    descendants.add(other);
+    for (const descendant of descendants) {
+      if (descendant === this) {
+        return true;
+      } else if (descendant.level < this.level) {
+        descendants.addAll(descendant.children);
+      }
+    }
+    return false;
+  }
+
+  isIndependentOf(other) {
+    return !this.dependsOn(other);
+  }
+
   setInvalid(value) { this.setFlag('invalid', value); }
 
   applyConstraints() { throw new UnimplementedError(); }
 
-  distSq(_point) { throw new UnimplementedError(); }
+  closestPoint(_position) { throw new UnimplementedError(); }
 
-  closestPoint(_reference, _result) { throw Exception("Unimplemented"); }
+  distSq(_position) { throw new UnimplementedError(); }
 
   tryDrag(_grabPosition) { throw new UnimplementedError(); }
 }
@@ -283,12 +300,37 @@ export class Primitives {
 }
 
 export class PrimitiveDragger {
+  constructor(primitive, grabPosition) {
+    this.primitive = primitive;
+    this.grabPosition = grabPosition.clone();
+  }
+
+  get canDrag() { return true; }
+
+  get offenses() { return []; }
+
   dragTo(_position) { throw new UnimplementedError(); }
 }
 
+class PrimitiveNotDragger extends PrimitiveDragger {
+  constructor(primitive, grabPosition, offenses) {
+    super(primitive, primitive.closestPoint(grabPosition));
+    this._offenses = offenses;
+    this.position = grabPosition.clone();
+  }
+
+  get canDrag() { return false; }
+
+  get offenses() { return this._offenses; }
+
+  dragTo(position) {
+    this.position.copy(position);
+  } 
+}
+
 class CompoundPrimitiveDragger extends PrimitiveDragger {
-  constructor(draggers) {
-    super();
+  constructor(primitive, grabPosition, draggers) {
+    super(primitive, grabPosition);
     this.draggers = draggers;
   }
 
@@ -317,13 +359,13 @@ export class PointPrimitive extends Primitive {
     return vec2.distSq(this.position, P);
   }
 
-  closestPoint(_reference, result) {
-    return result.copy(this.position);
+  closestPoint(_) {
+    return this.position;
   }
 
   tryMoveTo(position) {
     const dragger = this.tryDrag(this.position);
-    if (dragger) {
+    if (dragger.canMove) {
       dragger.dragTo(position);
       return true;
     } else {
@@ -334,7 +376,7 @@ export class PointPrimitive extends Primitive {
 
 class FreePointPrimitiveDragger extends PrimitiveDragger {
   constructor(point, grabPosition) {
-    super();
+    super(point, grabPosition);
     this.point = point;
     this.offset = vec2.span(grabPosition, point.position);
   }
@@ -380,12 +422,14 @@ export class IntersectionPointPrimitive extends PointPrimitive {
     }
   }
 
-  tryDrag(_grabPosition) { return null; }
+  tryDrag(grabPosition) {
+    return new PrimitiveNotDragger(this, grabPosition, [this]);
+  }
 }
 
 class PivotPointPrimitiveDragger extends PrimitiveDragger {
-  constructor (pivot, subject) {
-    super();
+  constructor (subject, grabPosition, pivot) {
+    super(subject, grabPosition);
     this.pivot = pivot;
     this.subject = subject;
     this.distance = vec2.dist(pivot.position, subject.position);
@@ -405,6 +449,34 @@ class PivotPointPrimitiveDragger extends PrimitiveDragger {
   }
 }
 
+const _TwoPointPrimitiveMixin = {
+  tryDrag(grabPosition) {
+    const point0 = this.parents[0], point1 = this.parents[1];
+    const dragger0 = point0.tryDrag(grabPosition);
+    const dragger1 = point1.tryDrag(grabPosition);
+    if (dragger0.canDrag && dragger1.canDrag) {
+      return new CompoundPrimitiveDragger(
+        this, grabPosition, [dragger0, dragger1]);
+    } else if (dragger0.canDrag) {
+      if (point1.dependsOn(point0)) {
+        return new PrimitiveNotDragger(
+          this, grabPosition, [point1, [point0, point1]]);
+      } else {
+        return this._tryDrag0Fixed1(grabPosition);
+      }
+    } else if (dragger1.canDrag) {
+      if (point0.dependsOn(point1)) {
+        return new PrimitiveNotDragger(
+          this, grabPosition, [point0, [point1, point0]]);
+      } else {
+        return this._tryDrag1Fixed0(grabPosition);
+      }
+    } else {
+      return new PrimitiveNotDragger(this, grabPosition, [point0, point1]);
+    }
+  },
+}
+
 export class LinePrimitive extends CurvePrimitive {
   constructor (origin, direction, parents) {
     super(parents);
@@ -417,13 +489,6 @@ export class LinePrimitive extends CurvePrimitive {
     return sq(vec2.per(this.direction, u)) / this.direction.lenSq();
   }
 
-  closestPoint(P, result) {
-    const n = vec2.rhp(this.direction);
-    const u = vec2.span(this.origin, P);
-    const t = -vec2.dot(u, n) / n.lenSq();
-    return result.copy(P).addScaled(t, n);
-  }
-
   eval(t) {
     return this.origin.clone().addScaled(t, this.direction);
   }
@@ -434,6 +499,10 @@ export class LinePrimitive extends CurvePrimitive {
 }
 
 export class TwoPointLinePrimitive extends LinePrimitive {
+  static install() {
+    Object.assign(TwoPointLinePrimitive.prototype, _TwoPointPrimitiveMixin);
+  }
+
   constructor(point0, point1) {
     super(new vec2(0, 0), new vec2(1, 0), [point0, point1]);
     this.applyConstraints();
@@ -448,22 +517,26 @@ export class TwoPointLinePrimitive extends LinePrimitive {
     this.direction.span(this.origin, this.point1.position);
   }
 
-  tryDrag(position) {
-    const dragger0 = this.point0.tryDrag(position);
-    const dragger1 = this.point1.tryDrag(position);
-    if (dragger0 && dragger1) {
-      return new CompoundPrimitiveDragger([dragger0, dragger1]);
-    } else if (dragger0) {
-      return new PivotPointPrimitiveDragger(this.point1, this.point0);
-    } else if (dragger1) {
-      return new PivotPointPrimitiveDragger(this.point0, this.point1);
-    } else {
-      return undefined;
-    }
+  closestPoint(position) {
+    return Geometry.lineClosestPoint(this.origin, this.direction, position);
+  }
+
+  _tryDrag0Fixed1(grabPosition) {
+    return new PivotPointPrimitiveDragger(
+      this.point0, grabPosition, this.point1);
+  }
+
+  _tryDrag1Fixed0(grabPosition) {
+    return new PivotPointPrimitiveDragger(
+      this.point1, grabPosition, this.point0);
   }
 }
 
 export class CirclePrimitive extends CurvePrimitive {
+  static install() {
+    Object.assign(CirclePrimitive.prototype, _TwoPointPrimitiveMixin);
+  }
+
   constructor(centerPoint, edgePoint) {
     super([centerPoint, edgePoint]);
     this.center = new vec2(0, 0);
@@ -484,20 +557,22 @@ export class CirclePrimitive extends CurvePrimitive {
     this.radius = vec2.dist(this.center, this.edgePoint.position);
   }
 
-  tryDrag(position) {
-    const centerDragger = this.centerPoint.tryDrag(position);
-    const edgeDragger = this.edgePoint.tryDrag(position);
-    if (centerDragger && edgeDragger) {
-      return new CompoundPrimitiveDragger([centerDragger, edgeDragger]);
-    } else if (edgeDragger) {
-      return new CircleEdgePrimitiveDragger(this.centerPoint, this.edgePoint);;
-    } else {
-      return undefined;
-    }
+  closestPoint(position) {
+    return Geometry.circleClosestPoint(this.center, this.radius, position);
+  }
+
+  _tryDrag0Fixed1(_grabPosition) {
+    return new FixedEdgeCirclePrimitiveDragger(
+      this.centerPoint, this.edgePoint, grabPosition);
+  }
+
+  _tryDrag1Fixed0(_grabPosition) {
+    return new FixedCernterCirclePrimitiveDragger(
+      this.centerPoint, this.edgePoint);
   }
 }
 
-class CircleEdgePrimitiveDragger extends PrimitiveDragger {
+class FixedCernterCirclePrimitiveDragger extends PrimitiveDragger {
   constructor(centerPoint, edgePoint) {
     super();
     this.centerPoint = centerPoint;
@@ -513,4 +588,34 @@ class CircleEdgePrimitiveDragger extends PrimitiveDragger {
       .addScaled(radius, this.rayDirection);
     this.edgePoint.notifyChange();
   }
+}
+
+class FixedEdgeCirclePrimitiveDragger extends PrimitiveDragger {
+  constructor(centerPoint, edgePoint, grabPosition) {
+    super(centerPoint, grabPosition);
+    this.centerPoint = centerPoint;
+    this.edgePoint = edgePoint;
+
+    const C = centerPoint.position, E = edgePoint.position, G = grabPosition;
+    const EC = vec2.span(E, C);
+    const EG = vec2.span(E, G);
+    const M = vec2.mid(E, G);
+    const MC = vec2.span(M, C);
+    this.deviation =
+      signnz(vec2.per(EC, EG)) *
+      Math.sqrt(MC.lenSq() / EG.lenSq());
+  }
+
+  dragTo(position) {
+    const E = this.edgePoint.position, P = position;
+    this.centerPoint.position
+      .mid(E, P)
+      .addScaled(this.deviation, vec2.span(E, P).rot90R());
+    this.centerPoint.notifyChange();
+  }
+}
+
+export function installPrimitives() {
+  TwoPointLinePrimitive.install();
+  CirclePrimitive.install();
 }

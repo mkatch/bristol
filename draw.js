@@ -1,4 +1,4 @@
-import { vec2 } from "/math.js";
+import { vec2, lerp } from "/math.js";
 import { CirclePrimitive, IntersectionPointPrimitive, LinePrimitive, PointPrimitive,  } from "/primitives.js";
 
 class Viewport {
@@ -19,6 +19,9 @@ export class Renderer {
     this._markedLines = [];
     this._circles = [];
     this._markedCircles = [];
+    this._dragLines = [];
+    this._dependencyArrows = [];
+    this._offendingPoints = [];
     this._ctx = canvas.getContext('2d');
   }
 
@@ -48,15 +51,29 @@ export class Renderer {
     }
   }
 
+  stageDraggerOffenses(dragger) {
+    this._dragLines.push([dragger.grabPosition, dragger.position]);
+    for (const offense of dragger.offenses) {
+      if (Array.isArray(offense)) {
+        this._dependencyArrows.push(offense);
+      } else {
+        this._offendingPoints.push(offense);
+      }
+    }
+  }
+
   clear() {
     this._ctx.setTransform(1, 0, 0, 1, 0, 0);
     this._ctx.fillStyle = 'white';
     this._ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  draw() {
+  draw(t) {
     const ctx = this._ctx;
     const px = 1 / this.viewport.scale;
+    const ondulation = 0.5 * (1 + Math.sin(3 * t * Math.PI));
+    const rotationAngle = t * Math.PI;
+    const rotation = new vec2(Math.cos(rotationAngle), Math.sin(rotationAngle));
 
     this._updateViewport();
 
@@ -105,6 +122,56 @@ export class Renderer {
     this._markedPoints.forEach(point => this._addPointToPath(point, 6 * px));
     ctx.fill();
     this._markedPoints.length = 0;
+
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 3 * px;
+    ctx.beginPath();
+    const dragCrossArm = rotation.scaled(lerp(6 * px, 8 * px, ondulation));
+    for (const line of this._dragLines) {
+      this._addCrossToPath(line[0], dragCrossArm);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = "red";
+    ctx.setLineDash([5 * px, 5 * px]);
+    ctx.lineDashOffset = (t - Math.floor(t)) * 20 * px;
+    for (const line of this._dragLines) {
+      ctx.moveTo(line[0].x, line[0].y);
+      ctx.lineTo(line[1].x, line[1].y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    this._dragLines.length = 0;
+    
+    for (const dependency of this._dependencyArrows) {
+      const P0 = dependency[0].position, P1 = dependency[1].position;
+      const sweep = 2 * t - Math.floor(2 * t);
+      const P0P1 = vec2.span(P0, P1);
+      const G0 = P0.clone().addScaled(1 + sweep, P0P1);
+      const G1 = G0.clone().addScaled(-2, P0P1);
+      const gradient = ctx.createLinearGradient(G0.x, G0.y, G1.x, G1.y);
+      const c0 = "rgba(255, 128, 128, 0.2)";
+      const c1 = "rgba(255, 128, 128, 0.9)";
+      gradient.addColorStop(0.00, c1);
+      gradient.addColorStop(0.49, c0);
+      gradient.addColorStop(0.50, c1);
+      gradient.addColorStop(0.99, c0);
+      gradient.addColorStop(1.00, c1);
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      this._addDependencyArrowToPath(P0, P1, 20 * px);
+      ctx.fill();
+    }
+    this._dependencyArrows.length = 0;
+
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 1 * px;
+    ctx.beginPath();
+    const offendingPointRadius = lerp(6 * px, 8 * px, ondulation);
+    for (const point of this._offendingPoints) {
+      this._addPointToPath(point, offendingPointRadius);
+    }
+    ctx.stroke();
+    this._offendingPoints.length = 0;
   }
 
   _updateViewport() {
@@ -119,7 +186,7 @@ export class Renderer {
 
   _addPointToPath(point, radius) {
     const P = point.position;
-    this._ctx.moveTo(P.x, P.y);
+    this._ctx.moveTo(P.x + radius, P.y);
     this._ctx.arc(P.x, P.y, radius, 0, 2 * Math.PI);
   }
 
@@ -147,5 +214,41 @@ export class Renderer {
     this._ctx.arc(
       circle.center.x, circle.center.y, circle.radius,
       0, 2 * Math.PI);
+  }
+
+  _addCrossToPath(P, d) {
+    this._ctx.moveTo(P.x - d.x, P.y - d.y);
+    this._ctx.lineTo(P.x + d.x, P.y + d.y);
+    this._ctx.moveTo(P.x - d.y, P.y + d.x);
+    this._ctx.lineTo(P.x + d.y, P.y - d.x);  
+  }
+
+  _addDependencyArrowToPath(P0, P1, h) {
+    const ux = vec2.span(P0, P1);
+    const d = ux.length();
+    if (d < 2 * h) {
+      return;
+    }
+    const x2 = d;
+    const x1 = x2 - h;
+    const y2 = h / Math.sqrt(3);
+    const y1 = y2 / 3;
+    ux.div(d);
+    const uy = vec2.lhp(ux);
+    
+    const P = P0.clone();
+    this._ctx.moveTo(P.x, P.y);
+    P.copy(P0).addScaled2(x1, ux, -y1, uy);
+    this._ctx.lineTo(P.x, P.y);
+    P.copy(P0).addScaled2(x1, ux, -y2, uy);
+    this._ctx.lineTo(P.x, P.y);
+    P.copy(P0).addScaled(x2, ux)
+    this._ctx.lineTo(P.x, P.y);
+    P.copy(P0).addScaled2(x1, ux, y2, uy);
+    this._ctx.lineTo(P.x, P.y);
+    P.copy(P0).addScaled2(x1, ux, y1, uy);
+    this._ctx.lineTo(P.x, P.y);
+    P.copy(P0);
+    this._ctx.lineTo(P.x, P.y);
   }
 }

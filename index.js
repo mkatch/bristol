@@ -1,10 +1,11 @@
-import { Primitives, PointPrimitive } from '/primitives.js';
+import { installPrimitives, Primitives, PointPrimitive, PrimitiveDragger } from '/primitives.js';
 import { vec2, sq } from '/math.js';
 import { installUtils } from '/utils.js';
 import { Renderer } from '/draw.js';
 import { CircleTool, LineTool, PointTool, ToolContext } from '/tools.js';
 
 installUtils();
+installPrimitives();
 
 const primitives = new Primitives();
 const constructionProtocol = [];
@@ -49,15 +50,15 @@ function onWindowResize() {
   needsRedraw = true;
 }
 
-function onAnimationFrame() {
-  if (needsRedraw) {
-    draw();
+function onAnimationFrame(tMillis) {
+  if (needsRedraw || (primitiveDragger && !primitiveDragger.canDrag)) {
+    draw(tMillis / 1000);
     needsRedraw = false;
   }
   window.requestAnimationFrame(onAnimationFrame);
 }
 
-function draw() {
+function draw(t) {
   renderer.clear();
 
   for (const primitive of primitives) {
@@ -67,7 +68,11 @@ function draw() {
     });
   }
 
-  renderer.draw();
+  if (primitiveDragger && !primitiveDragger.canDrag) {
+    renderer.stageDraggerOffenses(primitiveDragger);
+  }
+
+  renderer.draw(t);
 
   /*
   ctx.strokeStyle = "darkGreen";
@@ -182,6 +187,15 @@ function onKeyDown(e) {
     case 'O':
       setTool(circleTool);
       break;
+
+    case 'x':
+    case 'X':
+      const P0 = primitives.createPoint(new vec2(300, 300));
+      const P1 = primitives.createPoint(new vec2(500, 300));
+      const c0 = primitives.createCircle(P0, P1);
+      const c1 = primitives.createCircle(P1, P0);
+      primitives.tryGetOrCreateIntersectionPoint(c0, c1, new vec2(400, 200));
+      primitives.tryGetOrCreateIntersectionPoint(c0, c1, new vec2(400, 400));
 
     case 'Tab':
       if (markedPrimitives.length > 1 || stashedMarkedPrimitives) {

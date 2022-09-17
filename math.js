@@ -56,10 +56,33 @@ export class vec2 {
     return this;
   }
 
+  mid(A, B) {
+    this.x = 0.5 * (A.x + B.x);
+    this.y = 0.5 * (A.y + B.y);
+    return this;
+  }
+
+  rot90R() {
+    const x = this.x;
+    this.x = this.y;
+    this.y = -x;
+    return this;
+  }
+
   addScaled(s, other) {
     this.x += s * other.x;
     this.y += s * other.y;
     return this;
+  }
+
+  addScaled2(s0, u0, s1, u1) {
+    this.x += s0 * u0.x + s1 * u1.x;
+    this.y += s0 * u0.y + s1 * u1.y;
+    return this;
+  }
+
+  scaled(s) {
+    return new vec2(s * this.x, s * this.y);
   }
 
   lenSq() {
@@ -94,6 +117,14 @@ export class vec2 {
     return new vec2(u.y, -u.x);
   }
 
+  static lhp(u) {
+    return new vec2(-u.y, u.x);
+  }
+  
+  static mid(A, B) {
+    return new vec2(0.5 * (A.x + B.x), 0.5 * (A.y + B.y));
+  }
+
   static lerp(A, B, t) {
     const ut = 1 - t;
     return new vec2(ut * A.x + t * B.x, ut * A.y + t * B.y);
@@ -109,6 +140,17 @@ export class vec2 {
 }
 
 export class Geometry {
+  static lineClosestPoint(P, d, Q) {
+    const n = vec2.rhp(d);
+    const u = vec2.span(P, Q);
+    const t = -vec2.dot(u, n) / n.lenSq();
+    return Q.clone().addScaled(t, n);
+  }
+
+  static circleClosestPoint(C, r, P) {
+    return vec2.span(C, P).setLength(r).add(C);
+  }
+
   static lineLineIntersections(P0, d0, P1, d1) {
     const t = vec2.per(vec2.span(P0, P1), d0) / vec2.per(d0, d1);
     return isFinite(t) ? [P1.clone().addScaled(t, d1)] : [];
@@ -145,6 +187,10 @@ export function sq(x) {
 
 export function signnz(x) {
   return x >= 0 ? 1 : -1;
+}
+
+export function lerp(a, b, t) {
+  return (1 - t) * a + t * b;
 }
 
 export function solveQuadratic(a, b, c) {
