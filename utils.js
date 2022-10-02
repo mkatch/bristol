@@ -5,6 +5,12 @@ export function checkDefined(value) {
   return value;
 }
 
+function evalLazyMessage(messageOrFunction) {
+  return messageOrFunction instanceof Function
+    ? messageOrFunction()
+    : messageOrFunction;
+}
+
 export class UnimplementedError extends Error {
   constructor(...params) {
     super(...params);
@@ -13,6 +19,44 @@ export class UnimplementedError extends Error {
     }
     this.name = 'UnimplementedError';
   }
+}
+
+export class StateError extends Error {
+  constructor(...params) {
+    super(...params);
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, StateError);
+    }
+    this.name = 'StateError';
+  }
+}
+
+export function checkState(condition, message) {
+  if (!condition) {
+    throw new StateError(evalLazyMessage(message));
+  }
+}
+
+export class ArgumentError extends Error {
+  constructor(name, value) {
+    super("Invalid argument '" + name + "'.");
+    this.argumentName = name;
+    this.argumentValue = value;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, ArgumentError);
+    }
+    this.name = 'ArgumentError';
+  }
+}
+
+export function checkArgument(condition, name, value) {
+  if (!condition) {
+    throw new ArgumentError(name, value);
+  }
+}
+
+export function isIterable(obj) {
+  return obj != null && Symbol.iterator in obj;
 }
 
 export function installUtils() {

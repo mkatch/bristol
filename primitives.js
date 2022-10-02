@@ -152,7 +152,10 @@ export class Primitives {
   }
 
   edit(changes) {
+    // We're not checking if each operation is wrapped in an `edit` block, but
+    // if there is a violation, it will be eventually detected here.
     console.assert(this._changedPrimitives.length == 0);
+
     try {
       changes();
     } finally {
@@ -365,7 +368,7 @@ export class PointPrimitive extends Primitive {
 
   tryMoveTo(position) {
     const dragger = this.tryDrag(this.position);
-    if (dragger.canMove) {
+    if (dragger.canDrag) {
       dragger.dragTo(position);
       return true;
     } else {

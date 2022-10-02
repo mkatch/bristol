@@ -3,10 +3,14 @@ import { vec2, sq } from '/math.js';
 import { installUtils } from '/utils.js';
 import { Renderer } from '/draw.js';
 import { CircleTool, LineTool, PointTool, ToolContext } from '/tools.js';
+import { Deserializer, FileSystem, Serializer } from '/serialization.js';
 
 installUtils();
 installPrimitives();
 
+const fileSystem = new FileSystem();
+const serializer = new Serializer();
+const deserializer = new Deserializer();
 const primitives = new Primitives();
 const constructionProtocol = [];
 const renderer = new Renderer(canvas);
@@ -213,6 +217,20 @@ function onKeyDown(e) {
       }
       e.preventDefault();
       break;
+
+    case 's':
+    case 'S':
+      const serialized = serializer.stringify(primitives);
+      window.localStorage.setItem('saved', serialized);
+      fileSystem.offer(serialized);
+
+    case 'a':
+    case 'A':
+      const serialized0 = window.localStorage.getItem('saved');
+      console.log(serialized0);
+
+      Primitives.dispose(primitives);
+      deserializer.destringify(serialized0, { into: primitives });
   }
 }
 

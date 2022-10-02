@@ -14,6 +14,10 @@ export class vec2 {
     return new vec2(this.x, this.y);
   }
 
+  toArray() {
+    return [this.x, this.y];
+  }
+
   set(x, y) {
     this.x = x;
     this.y = y;
@@ -91,6 +95,10 @@ export class vec2 {
 
   length() {
     return Math.sqrt(this.lenSq());
+  }
+
+  static fromArray(c) {
+    return new vec2(c[0], c[1]);
   }
 
   static add(u, v) {
