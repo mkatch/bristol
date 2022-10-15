@@ -223,14 +223,14 @@ function onKeyDown(e) {
       const serialized = serializer.stringify(primitives);
       window.localStorage.setItem('saved', serialized);
       fileSystem.offer(serialized);
+      break;
 
     case 'a':
     case 'A':
       const serialized0 = window.localStorage.getItem('saved');
-      console.log(serialized0);
-
       Primitives.dispose(primitives);
       deserializer.destringify(serialized0, { into: primitives });
+      break;
   }
 }
 

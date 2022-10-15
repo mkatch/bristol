@@ -5,7 +5,9 @@ import { checkArgument, checkDefined, checkState, isIterable, UnimplementedError
 export class DeserializationError extends Error {
   constructor(message, e, ...params) {
     super(message, ...params);
-    if (Error.captureStackTrace) {
+    if (e?.stack) {
+      this.stack = e.stack;
+    } else if (Error.captureStackTrace) {
       Error.captureStackTrace(this, DeserializationError);
     }
     this.name = 'DeserializationError';
@@ -15,7 +17,7 @@ export class DeserializationError extends Error {
   static wrap(e) {
     return e instanceof DeserializationError
       ? e
-      : new DeserializationError('Error ' + e, e);
+      : new DeserializationError(e.toString(), e);
   }
 }
 
@@ -59,7 +61,8 @@ export class Serializer {
       record.position = primitive.position.clone();
     } else if (prototype === IntersectionPointPrimitive.prototype) {
       record.type = 'X';
-      record.position = primitive.position.clone();
+      record.approximatePosition = primitive.position.clone();
+      record.hints = primitive.hints.cloneUntilLevel(1);
     } else if (prototype === TwoPointLinePrimitive.prototype) {
       record.type = 'L';
     } else if (prototype === CirclePrimitive.prototype) {
@@ -72,19 +75,27 @@ export class Serializer {
 
   _stringifySingleRecord(record, builder) {
     builder.indent('{', '  ', () => {
-      for (const [key, value] of Object.entries(record)) {
-        builder.push('"', key);
-        if (value instanceof vec2) {
-          builder.push(':v": ', JSON.stringify(value.toArray()));
-        } else {
-          builder.push('": ', JSON.stringify(value));
+      for (const vanillaEntry of Object.entries(record)) {
+        const entry = Serializer._replaceRecordEntry(vanillaEntry);
+        if (!entry) {
+          continue;
         }
+        builder.push('"', entry[0], '": ', JSON.stringify(entry[1]));
         builder.mark();
         builder.push(',');
         builder.newline();
       }
       builder.rollBack();
     }, '}');
+  }
+
+  static _replaceRecordEntry(entry) {
+    const key = entry[0], value = entry[1];
+    if (value instanceof vec2) {
+      return [key + ':v', value.toArray()];
+    } else {
+      return entry;
+    }
   }
 }
 
@@ -129,14 +140,19 @@ export class Deserializer {
     const parents = record.parents
       ? record.parents.map(id => this._resolveId(id))
       : null;
-
+    
     switch (record.type) {
       case 'P':
         return this._primitives.createPoint(record.position);
 
       case 'X':
+        // TODO: Result can be undefined, in which case getting `.point` will
+        // crash. Handle such case.
         return this._primitives.tryGetOrCreateIntersectionPoint(
-          parents[0], parents[1], record.position);
+          parents[0], parents[1], {
+            approximatePosition: record.approximatePosition,
+            hints: record.hints,
+          }).point;
       
       case 'L':
         return this._primitives.createLine(parents[0], parents[1]);
@@ -150,26 +166,11 @@ export class Deserializer {
     const vanilla = JSON.parse(text);
     if (Array.isArray(vanilla)) {
       for (const record of vanilla) {
-        yield this._applyJsonCustomizations(record);
+        yield Deserializer._reviveRecord(record);
       }
     } else {
-      yield this._applyJsonCustomizations(vanilla);
+      yield Deserializer._reviveRecord(vanilla);
     }
-  }
-
-  _applyJsonCustomizations(vanillaRecord) {
-    const record = {};
-    for (const [key, value] of Object.entries(vanillaRecord)) {
-      if (key.endsWith(':v')) {
-        if (!Array.isArray(value)) {
-          throw new Error();
-        }
-        record[key.slice(0, -2)] = vec2.fromArray(value);
-      } else {
-        record[key] = value;
-      }
-    };
-    return record;
   }
 
   _resolveId(id) {
@@ -178,6 +179,30 @@ export class Deserializer {
       throw new DeserializationError('Unknown id ' + id);
     } else {
       return primitive;
+    }
+  }
+
+  static _reviveRecord(vanillaRecord) {
+    const record = {};
+    for (const [key, value] of Object.entries(vanillaRecord)) {
+      const colonIndex = key.indexOf(':');
+      if (colonIndex >= 0) {
+        const keyPrefix = key.substring(0, colonIndex);
+        const typeSuffix = key.substring(colonIndex + 1);
+        record[keyPrefix] = Deserializer._reviveValue(typeSuffix, value);
+      } else {
+        record[key] = value;
+      }
+    };
+    return record;
+  }
+
+  static _reviveValue(typeSuffix, vanillaValue) {
+    switch (typeSuffix) {
+      case 'v': return vec2.fromArray(vanillaValue);
+      default:
+        throw new DeserializationError(
+          'Unknown type suffix "' + typeSuffix +'"');
     }
   }
 }

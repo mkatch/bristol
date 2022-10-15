@@ -67,7 +67,9 @@ class Tool {
     
     if (this.ctx.markedPrimitives.length == 2) {
       const intersection = this.ctx.primitives.tryGetOrCreateIntersectionPoint(
-        this.ctx.markedPrimitives[0], this.ctx.markedPrimitives[1], position);
+        this.ctx.markedPrimitives[0], this.ctx.markedPrimitives[1], {
+        approximatePosition: position,
+      });
       if (intersection) {
         if (!intersection.isExisting) {
           this._markOwn(intersection.point);

@@ -4,6 +4,10 @@ export class vec2 {
     this.y = y;
   }
 
+  equals(other) {
+    return this.x == other.x && this.y == other.y;
+  }
+
   copy(other) {
     this.x = other.x;
     this.y = other.y;

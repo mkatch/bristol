@@ -1,5 +1,5 @@
 import { Geometry, signnz, sq, vec2 } from "/math.js";
-import { UnimplementedError } from "/utils.js";
+import { checkDefined, UnimplementedError } from "/utils.js";
 
 export class Primitive {
   constructor(parents) {
@@ -71,7 +71,7 @@ export class Primitive {
 export class Primitives {
   constructor () {
     this._primitives = [];
-    this._nextPrimitiveId = 1;
+    this._nextPrimitiveId = 1
     this._changedPrimitives = [];
     this._invalidatedPrimitives = [];
     this._intersectionPoints = new Map();
@@ -115,32 +115,47 @@ export class Primitives {
   /// the parents were intersecting, but now is marked as invalid. It is
   /// debatable what to do in such situation, but the current implementation
   /// returns `undefined`.
-  tryGetOrCreateIntersectionPoint(primitive0, primitive1, approximatePosition) {
+  tryGetOrCreateIntersectionPoint(primitive0, primitive1, kwargs) {
     console.assert(this._invalidatedPrimitives.length == 0);
+    const approximatePosition = checkDefined(kwargs.approximatePosition)
+    const hints = kwargs.hints;
+    const allowInvalid = kwargs.allowInvalid ?? false;
 
-    const position = Primitives.intersection(
-      primitive0, primitive1, approximatePosition);
-    if (!position) {
+    const intersection = IntersectionPointPrimitive.intersection(
+      primitive0, primitive1, {
+      approximatePosition: approximatePosition,
+      hints: hints,
+    });
+    if (!intersection.position) {
       return undefined;
     }
+    const position = intersection.position;
 
     const id = Primitives._primitivePairId(primitive0, primitive1);
-    const existing = this._intersectionPoints.get(id);
-    if (existing) {
-      const matching = existing.find(point => point.position.equals(position));
-      if (matching) {
-        return {
-          point: matching,
-          isExisting: true,
-        };
-      } 
+    const existing = this._intersectionPoints.putIfAbsent(id, () => []);
+    const matching = existing.find(point => point.position.equals(position));
+    if (matching) {
+      return {
+        point: matching,
+        isExisting: true,
+      };
     }
 
+    const point = this._initializePrimitive(
+      new IntersectionPointPrimitive(
+        primitive0, primitive1, {
+        approximatePosition: approximatePosition,
+        hints: hints,
+      }));
+    existing.push(point);
     return {
-      point: this._initializePrimitive(
-        new IntersectionPointPrimitive(primitive0, primitive1, position)),
+      point: point,
       isExisting: false,
     }
+  }
+
+  createIntersectionPoint(intersectionKeeper, approximatePosition) {
+
   }
 
   createLine(point0, point1) {
@@ -174,7 +189,7 @@ export class Primitives {
     primitive.id = this._nextPrimitiveId++;
     primitive._changeCallback = this._changeCallback;
     this._primitives.push(primitive);
-    primitive.notifyChange();
+    primitive.applyConstraints();
     return primitive;
   }
 
@@ -243,15 +258,15 @@ export class Primitives {
     }
   }
 
-  static intersection(primitive0, primitive1, position) {
-    const candidates = Primitives.intersections(primitive0, primitive1);
-    if (candidates.length > 0) {
-      return candidates.findMinBy(
-        candidate => vec2.distSq(position, candidate));
-    } else {
-      return undefined;
-    }
-  }
+  // static intersection(primitive0, primitive1, position) {
+  //   const candidates = Primitives.intersections(primitive0, primitive1);
+  //   if (candidates.length > 0) {
+  //     return candidates.findMinBy(
+  //       candidate => vec2.distSq(position, candidate));
+  //   } else {
+  //     return undefined;
+  //   }
+  // }
 
   static _lineIntersections(line, primitive) {
     if (primitive instanceof LinePrimitive) {
@@ -405,9 +420,19 @@ export class FreePointPrimitive extends PointPrimitive {
 }
 
 export class IntersectionPointPrimitive extends PointPrimitive {
-  constructor(curve0, curve1, approximatePosition) {
+  constructor(curve0, curve1, kwargs) {
+    const approximatePosition = checkDefined(kwargs.approximatePosition);
+    const hints = kwargs.hints ?? [];
+
     super(approximatePosition, [curve0, curve1]);
-    this.applyConstraints();
+
+    // For curves with multiple intersections, we remeber the index of the
+    // chosen one for temporal consistency. The number of intersection may vary,
+    // so instead of a single index, we store a map #intersections -> index.
+    // When a previously unseen #intersections is witnessed, the choice is made
+    // based on Euclidean distance wrt. previous position. After that, the index
+    // is used irrespective of the Euclidean distance.
+    this.hints = hints;
   }
 
   get curve0() { return this.parents[0]; }
@@ -415,10 +440,16 @@ export class IntersectionPointPrimitive extends PointPrimitive {
   get curve1() { return this.parents[1]; }
 
   applyConstraints() {
-    const intersection = Primitives.intersection(
-      this.curve0, this.curve1, this.position);
-    if (intersection) {
-      this.position.copy(intersection);
+    const intersection = IntersectionPointPrimitive.intersection(
+      this.curve0, this.curve1, {
+      approximatePosition: this.position,
+      hints: this.hints,
+    })
+    if (intersection.position) {
+      this.position.copy(intersection.position);
+      if (!intersection.isHint && intersection.all.length > 1) {
+        this.hints.push([intersection.all.length, intersection.index]);
+      }
       this.setInvalid(false);
     } else {
       this.setInvalid(true);
@@ -427,6 +458,25 @@ export class IntersectionPointPrimitive extends PointPrimitive {
 
   tryDrag(grabPosition) {
     return new PrimitiveNotDragger(this, grabPosition, [this]);
+  }
+
+  static intersection(primitive0, primitive1, kwargs) {
+    const approximatePosition = checkDefined(kwargs.approximatePosition);
+    const hints = kwargs.hints;
+
+    const intersections = Primitives.intersections(primitive0, primitive1)
+    const hint = hints?.find(hint => hint[0] == intersections.length);
+    const index = hint
+      ? hint[1]
+      : intersections.indexOfMinBy(position =>
+          vec2.distSq(position, approximatePosition));
+
+    return {
+      position: intersections[index],
+      all: intersections,
+      index: index,
+      isHint: !!hint,
+    };
   }
 }
 

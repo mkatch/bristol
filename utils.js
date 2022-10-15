@@ -61,6 +61,23 @@ export function isIterable(obj) {
 
 export function installUtils() {
   Object.assign(Array.prototype, {
+    countWhere(predicate) {
+      const result = 0;
+      for (const item of this) {
+        if (predicate(item)) {
+          ++result;
+        }
+      }
+      return result;
+    },
+
+    cloneUntilLevel(level) {
+      checkArgument(level >= 0, 'level', level);
+      return this.map(item => level > 0 && Array.isArray(item)
+        ? item.cloneUntilLevel(level - 1)
+        : item);
+    },
+
     retainOnly(predicate) {
       let i = 0;
       for (let j = 0; j < this.length; ++j) {
@@ -71,18 +88,24 @@ export function installUtils() {
       this.length = i;
     },
 
-    findMinBy(valueFn) {
-      let bestItem = this[0];
-      let minValue = valueFn(bestItem);
+    indexOfMinBy(valueFn) {
+      if (this.length == 0) {
+        return -1;
+      }
+      let bestIndex = 0;
+      let minValue = valueFn(this[bestIndex]);
       for (let i = 1; i < this.length; ++i) {
-        const item = this[i];
-        const value = valueFn(item);
+        const value = valueFn(this[i]);
         if (value < minValue) {
           minValue = value;
-          bestItem = item;
+          bestIndex = i;
         }
       }
-      return bestItem;
+      return bestIndex;
+    },
+
+    findMinBy(valueFn) {
+      return this[this.indexOfMinBy(valueFn)];
     },
 
     includesAny(items) {
@@ -105,6 +128,18 @@ export function installUtils() {
 
     includesAll(items) {
       return items.every(item => this.includes(y));
+    },
+  });
+
+  Object.assign(Map.prototype, {
+    putIfAbsent(key, valueFn) {
+      if (this.has(key)) {
+        return this.get(key);
+      } else {
+        const value = valueFn();
+        this.set(key, value);
+        return value;
+      }
     },
   });
 
