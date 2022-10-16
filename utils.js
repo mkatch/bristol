@@ -39,7 +39,7 @@ export function checkState(condition, message) {
 
 export class ArgumentError extends Error {
   constructor(name, value) {
-    super("Invalid argument '" + name + "'.");
+    super("Invalid argument '" + name + "': " + value);
     this.argumentName = name;
     this.argumentValue = value;
     if (Error.captureStackTrace) {
@@ -53,6 +53,12 @@ export function checkArgument(condition, name, value) {
   if (!condition) {
     throw new ArgumentError(name, value);
   }
+}
+
+export function checkNamedArgument(kwargs, name) {
+  const value = kwargs[name];
+  checkArgument(!!value, name, value);
+  return value;
 }
 
 export function isIterable(obj) {

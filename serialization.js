@@ -55,13 +55,16 @@ export class Serializer {
     if (primitive.parents.length > 0) {
       record.parents = primitive.parents.map(parent => parent.id);
     }
+    if (primitive.isInvalid) {
+      record.invalid = true;
+    }
     const prototype = Object.getPrototypeOf(primitive);
     if (prototype === FreePointPrimitive.prototype) {
       record.type = 'P';
       record.position = primitive.position.clone();
     } else if (prototype === IntersectionPointPrimitive.prototype) {
       record.type = 'X';
-      record.approximatePosition = primitive.position.clone();
+      record.position = primitive.position.clone();
       record.hints = primitive.hints.cloneUntilLevel(1);
     } else if (prototype === TwoPointLinePrimitive.prototype) {
       record.type = 'L';
@@ -146,12 +149,11 @@ export class Deserializer {
         return this._primitives.createPoint(record.position);
 
       case 'X':
-        // TODO: Result can be undefined, in which case getting `.point` will
-        // crash. Handle such case.
         return this._primitives.tryGetOrCreateIntersectionPoint(
           parents[0], parents[1], {
-            approximatePosition: record.approximatePosition,
+            approximatePosition: record.position,
             hints: record.hints,
+            invalid: record.invalid,
           }).point;
       
       case 'L':

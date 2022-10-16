@@ -38,7 +38,7 @@ class Tool {
   commit() {
     const sorted = Primitives.sortByLevelDescending([...this.ownPrimitives]);
     for (const primitive of sorted) {
-      console.assert(!primitive.invalid);
+      console.assert(!primitive.isInvalid);
       primitive.isSelectable = true;
       this.ctx.constructionProtocol.push(primitive);
     }
@@ -86,7 +86,7 @@ class Tool {
     const point = kwargs.reuse && kwargs.reuse.tryMoveTo(position)
       ? kwargs.reuse
       : this.createPoint(position);
-    point.setInvalid(invalid);
+    point.isInvalid = invalid;
     return point;
   }
 
@@ -128,7 +128,7 @@ class _TwoPointTool extends Tool {
   onMouseClick() {
     if (!this._point0) {
       this._point0 = this.placePoint(this.ctx.mousePosition);
-    } else if (this._primitive && !this._point1.invalid) {
+    } else if (this._primitive && !this._point1.isInvalid) {
       this.commit();
     }
   }

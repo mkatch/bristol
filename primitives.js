@@ -1,5 +1,5 @@
 import { Geometry, signnz, sq, vec2 } from "/math.js";
-import { checkDefined, UnimplementedError } from "/utils.js";
+import { checkArgument, checkDefined, checkNamedArgument, UnimplementedError } from "/utils.js";
 
 export class Primitive {
   constructor(parents) {
@@ -14,10 +14,6 @@ export class Primitive {
     }
   }
 
-  notifyChange() {
-      this._changeCallback(this);
-  }
-
   dispose() {
     if (this.isDisposed) {
       throw new Error("Already disposed.");
@@ -30,6 +26,14 @@ export class Primitive {
     }
     this.isDisposed = true;
     this.notifyChange();
+  }
+
+  get isInvalid() { return this._invalid; }
+
+  set isInvalid(value) { this.setFlag('_invalid', value); }
+
+  notifyChange() {
+      this._changeCallback(this);
   }
 
   setFlag(name, value) {
@@ -56,8 +60,6 @@ export class Primitive {
   isIndependentOf(other) {
     return !this.dependsOn(other);
   }
-
-  setInvalid(value) { this.setFlag('invalid', value); }
 
   applyConstraints() { throw new UnimplementedError(); }
 
@@ -117,28 +119,50 @@ export class Primitives {
   /// returns `undefined`.
   tryGetOrCreateIntersectionPoint(primitive0, primitive1, kwargs) {
     console.assert(this._invalidatedPrimitives.length == 0);
-    const approximatePosition = checkDefined(kwargs.approximatePosition)
+    const approximatePosition = checkNamedArgument(
+      kwargs, 'approximatePosition');
     const hints = kwargs.hints;
-    const allowInvalid = kwargs.allowInvalid ?? false;
+    const invalid = kwargs.invalid ?? false;
 
     const intersection = IntersectionPointPrimitive.intersection(
       primitive0, primitive1, {
       approximatePosition: approximatePosition,
       hints: hints,
     });
-    if (!intersection.position) {
+    const position = intersection.position;
+
+    checkArgument(
+      !(invalid && position), 'invalid', "Expected invalid intersection");
+    if (!invalid && !position) {
       return undefined;
     }
-    const position = intersection.position;
 
     const id = Primitives._primitivePairId(primitive0, primitive1);
     const existing = this._intersectionPoints.putIfAbsent(id, () => []);
-    const matching = existing.find(point => point.position.equals(position));
-    if (matching) {
-      return {
-        point: matching,
-        isExisting: true,
-      };
+
+    if (position) {
+      const matching = existing.find(point => point.position.equals(position));
+      if (matching) {
+        return {
+          point: matching,
+          isExisting: true,
+        };
+      }
+    } else {
+      // We only expect invalid points during deserialization in which case
+      // there should be hints and no conflicts. General solution, if ever
+      // needed, left for future consideration.
+      if (!hints) {
+        throw new UnimplementedError("Missing hints.");
+      }
+      if (existing
+          .some(point => point.hints
+            .some(hint0 => hints
+              .some(hint1 =>
+                hint0[0] == hint1[0] &&
+                hint0[1] == hint1[1])))) {
+        throw new UnimplementedError("Conflicting invalid intersection points.");
+      }
     }
 
     const point = this._initializePrimitive(
@@ -450,9 +474,9 @@ export class IntersectionPointPrimitive extends PointPrimitive {
       if (!intersection.isHint && intersection.all.length > 1) {
         this.hints.push([intersection.all.length, intersection.index]);
       }
-      this.setInvalid(false);
+      this.isInvalid = false;
     } else {
-      this.setInvalid(true);
+      this.isInvalid = true;
     }
   }
 
@@ -461,7 +485,8 @@ export class IntersectionPointPrimitive extends PointPrimitive {
   }
 
   static intersection(primitive0, primitive1, kwargs) {
-    const approximatePosition = checkDefined(kwargs.approximatePosition);
+    const approximatePosition = checkNamedArgument(
+      kwargs, 'approximatePosition');
     const hints = kwargs.hints;
 
     const intersections = Primitives.intersections(primitive0, primitive1)
