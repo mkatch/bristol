@@ -56,9 +56,24 @@ export function checkArgument(condition, name, value) {
 }
 
 export function checkNamedArgument(kwargs, name) {
-  const value = kwargs[name];
-  checkArgument(!!value, name, value);
-  return value;
+  checkArgument(name in kwargs, name);
+  return kwargs[name];
+}
+
+export class ExpectationError extends Error {
+  constructor(...params) {
+    super(...params);
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, ExpectationError);
+    }
+    this.name = 'ExpectationError';
+  }
+}
+
+export function checkExpectation(condition, message) {
+  if (!condition) {
+    throw new ExpectationError(evalLazyMessage(message));
+  }
 }
 
 export function isIterable(obj) {

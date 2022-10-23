@@ -1,5 +1,5 @@
 import { Geometry, signnz, sq, vec2 } from "/math.js";
-import { checkArgument, checkDefined, checkNamedArgument, UnimplementedError } from "/utils.js";
+import { checkArgument, checkExpectation, checkNamedArgument, checkState, UnimplementedError } from "/utils.js";
 
 export class Primitive {
   constructor(parents) {
@@ -72,24 +72,21 @@ export class Primitive {
 
 export class Primitives {
   constructor () {
-    this._primitives = [];
-    this._nextPrimitiveId = 1
+    this._primitives = new Map();
+    this._nextPrimitiveId = 1;
+    this._freePrimitiveIds = [];
     this._changedPrimitives = [];
     this._invalidatedPrimitives = [];
     this._intersectionPoints = new Map();
     this._changeCallback = primitive => this._onPrimitiveChange(primitive);
   }
 
-  *[Symbol.iterator]() {
-    let i = 0;
-    for (let j = 0; j < this._primitives.length; ++j) {
-      const primitive = this._primitives[j];
-      if (!primitive.isDisposed) {
-        this._primitives[i++] = primitive;
-        yield primitive;
-      }
-    }
-    this._primitives.length = i;
+  [Symbol.iterator]() {
+    return this._primitives.values();
+  }
+
+  get(id) {
+    return this._primitives.get(id);
   }
 
   createPoint(position) {
@@ -178,10 +175,6 @@ export class Primitives {
     }
   }
 
-  createIntersectionPoint(intersectionKeeper, approximatePosition) {
-
-  }
-
   createLine(point0, point1) {
     return this._initializePrimitive(new TwoPointLinePrimitive(point0, point1));
   }
@@ -210,9 +203,11 @@ export class Primitives {
   }
 
   _initializePrimitive(primitive) {
-    primitive.id = this._nextPrimitiveId++;
+    // Main purpose of the `_freePrimitiveIds` stack is to ensure deterministig
+    // ID assignment during undo-redo operations.
+    primitive.id = this._freePrimitiveIds.pop() ?? this._nextPrimitiveId++;
     primitive._changeCallback = this._changeCallback;
-    this._primitives.push(primitive);
+    this._primitives.set(primitive.id, primitive);
     primitive.applyConstraints();
     return primitive;
   }
@@ -245,6 +240,9 @@ export class Primitives {
   }
 
   _onPrimitiveDisposal(primitive) {
+    this._primitives.delete(primitive.id);
+    this._freePrimitiveIds.push(primitive.id);
+
     if (primitive instanceof IntersectionPointPrimitive) {
       const pairId = Primitives._primitivePairId(
         primitive.curve0, primitive.curve1);
@@ -414,6 +412,10 @@ export class PointPrimitive extends Primitive {
       return false;
     }
   }
+
+  moveTo(position) {
+    checkState(tryMoveTo(position), "Cannot be moved.");
+  }
 }
 
 class FreePointPrimitiveDragger extends PrimitiveDragger {
@@ -445,7 +447,8 @@ export class FreePointPrimitive extends PointPrimitive {
 
 export class IntersectionPointPrimitive extends PointPrimitive {
   constructor(curve0, curve1, kwargs) {
-    const approximatePosition = checkDefined(kwargs.approximatePosition);
+    const approximatePosition = checkNamedArgument(
+      kwargs, 'approximatePosition');
     const hints = kwargs.hints ?? [];
 
     super(approximatePosition, [curve0, curve1]);
@@ -464,20 +467,32 @@ export class IntersectionPointPrimitive extends PointPrimitive {
   get curve1() { return this.parents[1]; }
 
   applyConstraints() {
+    this.reset({ approximatePosition: this.position });
+  }
+
+  reset(kwargs) {
+    const approximatePosition = checkNamedArgument(
+      kwargs, 'approximatePosition');
+    const hints = kwargs.hints ?? this.hints;
+    const invalid = kwargs.invalid;
+
     const intersection = IntersectionPointPrimitive.intersection(
       this.curve0, this.curve1, {
-      approximatePosition: this.position,
-      hints: this.hints,
-    })
+      approximatePosition: approximatePosition,
+      hints: hints,
+    });
     if (intersection.position) {
+      checkExpectation(invalid != true, "Expected invalid intersection.");
       this.position.copy(intersection.position);
       if (!intersection.isHint && intersection.all.length > 1) {
-        this.hints.push([intersection.all.length, intersection.index]);
+        hints.push([intersection.all.length, intersection.index]);
       }
       this.isInvalid = false;
     } else {
+      checkExpectation(invalid != false, "Expected valid intersection");
       this.isInvalid = true;
     }
+    this.hints = hints;
   }
 
   tryDrag(grabPosition) {

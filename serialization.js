@@ -1,6 +1,6 @@
 import { CirclePrimitive, FreePointPrimitive, IntersectionPointPrimitive, Primitives, TwoPointLinePrimitive } from "/primitives.js";
 import { vec2 } from '/math.js';
-import { checkArgument, checkDefined, checkState, isIterable, UnimplementedError } from '/utils.js';
+import { checkArgument, checkNamedArgument, checkState, isIterable, UnimplementedError } from '/utils.js';
 
 export class DeserializationError extends Error {
   constructor(message, e, ...params) {
@@ -22,20 +22,27 @@ export class DeserializationError extends Error {
 }
 
 export class Serializer {
-  recordify(primitives) {
-    return [...this._recordify(primitives)];
+  recordify(primitives, kwargs) {
+    checkState(!this._recordifyInProgress, "Nested call to `recordify`");
+    this._includesImmutable = kwargs?.immutable ?? true;
+    this._recordifyInProgress = true;
+    try {
+      return [...this._recordify(primitives)];
+    } finally {
+      delete this._recordifyInProgress;
+    }
   }
 
-  stringify(primitives) {
-    return this.stringifyRecords(this.recordify(primitives));
+  stringify(primitives, kwargs) {
+    return Serializer.stringifyRecords(this.recordify(primitives, kwargs));
   }
 
-  stringifyRecords(records) {
+  static stringifyRecords(records) {
     checkArgument(isIterable(records), 'records', records);
     const builder = new StringBuilder();
     builder.indent('[', '  ', () => {
       for (const record of records) {
-        this._stringifySingleRecord(record, builder);
+        Serializer._stringifySingleRecord(record, builder);
         builder.mark();
         builder.push(', ');
       }
@@ -44,20 +51,21 @@ export class Serializer {
     return builder.build();
   }
 
-  * _recordify(primitives) {
+  * _recordify(primitives, kwargs) {
     for (const primitive of primitives) {
-      yield this._recordifySingle(primitive);
+      yield this._recordifySingle(primitive, kwargs);
     }
   }
 
   _recordifySingle(primitive) {
     const record = { id: primitive.id };
-    if (primitive.parents.length > 0) {
+    if (this._includesImmutable && primitive.parents.length > 0) {
       record.parents = primitive.parents.map(parent => parent.id);
     }
     if (primitive.isInvalid) {
       record.invalid = true;
     }
+
     const prototype = Object.getPrototypeOf(primitive);
     if (prototype === FreePointPrimitive.prototype) {
       record.type = 'P';
@@ -73,10 +81,19 @@ export class Serializer {
     } else {
       throw new UnimplementedError();
     }
+
+    // We could have a separate flag, but right now we treat the existance of
+    // `type` as an indicator of the record containing immutable properties.
+    if (!this._includesImmutable) {
+      delete record.type;
+    } else {
+      console.assert('type' in record);
+    }
+
     return record;
   }
 
-  _stringifySingleRecord(record, builder) {
+  static _stringifySingleRecord(record, builder) {
     builder.indent('{', '  ', () => {
       for (const vanillaEntry of Object.entries(record)) {
         const entry = Serializer._replaceRecordEntry(vanillaEntry);
@@ -107,64 +124,129 @@ export class Deserializer {
     this._bySerializedId = new Map();
   }
 
+  /// Materializes the `records` into the given primitives collection.
+  ///
+  ///  * `into`: The collection that should receive the changes.
+  ///  * `existing`: If true, treats `records` as a diff on top of `into`.
+  ///      Otherwise, `records` are considered scoped. Defaults to false.
+  ///
+  /// When `existing` is false, which is the default, `records` need to
+  /// comprehensively describe the scene. In particular, they must specify
+  /// primitive type and parent-child relationships. Moreover, the cross-
+  /// references are allowed within the list.
+  ///
+  /// When `existing` is true, the record ids are generally assumed to refer to
+  /// primitives already present in the `into` primitive collection and need not
+  /// specify the immutable information like type and parent-child relationship.
+  /// In fact, that information is ignored. However, if a record contains
+  /// `type`, it is assumed to describe a new primitive which is created in
+  /// effect. Cross-references are allowed both, to existing primitives, and to
+  /// new primitives. Actually, the id of a "new" record has to match the id
+  /// assigned to the primitive that it spawns (note that id assignment is
+  /// deterministic and it is always the smallest unused integer).
   derecordify(records, kwargs) {
-    checkState(!this._primitives);
-    this._primitives = checkDefined(kwargs.into);
+    checkState(!this._primitives, "Nested call to `derecordify`");
+    this._primitives = checkNamedArgument(kwargs, 'into');
+    this._allowsExisting = kwargs.existing ?? false;
+
     try {
       for (const record of records) {
-        if (this._bySerializedId.has(record.id)) {
-          throw new DeserializationError('Duplicate id ' + record.id);
-        }
-        this._bySerializedId.set(record.id, this._derecordifySingle(record));
+        this._derecordifySingle(record);
       }
     } catch (e) {
       Primitives.dispose(this._bySerializedId.values());
       throw DeserializationError.wrap(e);
     } finally {
-      this._primitives = null;
+      delete this._primitives;
       this._bySerializedId.clear();
     }
   }
 
   destringify(text, kwargs) {
-    const primitives = checkDefined(kwargs.into);
+    checkNamedArgument(kwargs, 'into');
     try {
-      return this.derecordify(
-        this._destringifyRecords(text), {
-        into: primitives,
-      });
+      return this.derecordify(Deserializer._destringifyRecords(text), kwargs);
     } catch (e) {
       throw DeserializationError.wrap(e);
     }
   }
 
-  // Converts a record to a primitive.
   _derecordifySingle(record) {
-    const parents = record.parents
-      ? record.parents.map(id => this._resolveId(id))
-      : null;
-    
-    switch (record.type) {
-      case 'P':
-        return this._primitives.createPoint(record.position);
-
-      case 'X':
-        return this._primitives.tryGetOrCreateIntersectionPoint(
-          parents[0], parents[1], {
-            approximatePosition: record.position,
-            hints: record.hints,
-            invalid: record.invalid,
-          }).point;
-      
-      case 'L':
-        return this._primitives.createLine(parents[0], parents[1]);
-
-      case 'O':
-        return this._primitives.createCircle(parents[0], parents[1]);
+    const id = this._checkProperty(record, 'id');
+    try {
+      const existing = this._allowsExisting
+        ? 'type' in record
+        : this._checkProperty(record, 'type') != undefined;
+      if (existing) {
+        if (this._bySerializedId.has(id)) {
+          throw new DeserializationError("Duplicate id.");
+        }
+        const primitive = this._derecordifySingleNew(record);
+        if (this._allowsExisting) {
+          if (primitive.id != id) {
+            throw new DeserializationError(
+              `Assigned id=${primitive.id} differs from postulated.`);
+          }
+        } else {
+          this._bySerializedId.set(record.id, primitive);
+        }
+      } else {
+        this._derecordifySingleExisting(record);
+      }
+    } catch (e) {
+      const message = e instanceof DeserializationError
+        ? e.message : e.toString();
+      throw new DeserializationError(`Record id=${id}: ${message}`);
     }
   }
 
-  * _destringifyRecords(text) {
+  _derecordifySingleNew(record) {
+    switch (record.type) {
+      case 'P': {
+        this._checkParents(record, 0);
+        return this._primitives.createPoint(
+          this._checkProperty(record, 'position'));
+      }
+      case 'X': {
+        const parents = this._checkParents(record, 2);
+        return this._primitives.tryGetOrCreateIntersectionPoint(
+          parents[0], parents[1], {
+            approximatePosition: this._checkProperty(record, 'position'),
+            hints: this._checkProperty(record, 'hints'),
+            invalid: record.invalid,
+          }).point;
+      }
+      case 'L': {
+        const parents = this._checkParents(record, 2);
+        return this._primitives.createLine(parents[0], parents[1]);
+      }
+      case 'O': {
+        const parents = this._checkParents(record, 2);
+        return this._primitives.createCircle(parents[0], parents[1]);
+      }
+      default:
+        throw new UnimplementedError(`Primitive type "${record.type}".`);
+    }
+  }
+
+  _derecordifySingleExisting(record) {
+    const primitive = this._resolveId(record.id);
+    const prototype = Object.getPrototypeOf(primitive);
+
+    if (prototype === FreePointPrimitive.prototype) {
+      primitive.moveTo(this._checkProperty(record, 'position'));
+    } else if (prototype === IntersectionPointPrimitive.prototype) {
+      primitive.reset({
+        approximatePosition: this._checkProperty(record, 'position'),
+        hints: this._checkProperty(record, 'hints'),
+        invalid: record.invalid,
+      });
+    } else {
+      throw new UnimplementedError();
+    }
+  }
+
+  static * _destringifyRecords(text) {
     const vanilla = JSON.parse(text);
     if (Array.isArray(vanilla)) {
       for (const record of vanilla) {
@@ -176,9 +258,11 @@ export class Deserializer {
   }
 
   _resolveId(id) {
-    const primitive = this._bySerializedId.get(id);
+    const primitive = this._allowsExisting
+      ? this._primitives.get(id)
+      : this._bySerializedId.get(id);
     if (!primitive) {
-      throw new DeserializationError('Unknown id ' + id);
+      throw new DeserializationError(`Unknown id=${id}`);
     } else {
       return primitive;
     }
@@ -205,6 +289,31 @@ export class Deserializer {
       default:
         throw new DeserializationError(
           'Unknown type suffix "' + typeSuffix +'"');
+    }
+  }
+
+  _checkParents(record, count) {
+    if (count == 0) {
+      if ('parents' in record) {
+        throw new DeserializationError("Unexpected property `parents`.");
+      }
+      return undefined;
+    }
+    const ids = this._checkProperty(record, 'parents');
+    if (ids.length != count) {
+      throw new DeserializationError(
+        `Expected ${count} parents but got ${ids.length}.`);
+    }
+    return ids.map(id => this._resolveId(id));
+  }
+
+  _checkProperty(record, property) {
+    const value = record[property];
+    if (value == undefined) {
+      throw new DeserializationError(
+        `Missing expected property \`${property}\``);
+    } else {
+      return value;
     }
   }
 }
