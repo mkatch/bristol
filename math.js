@@ -1,5 +1,8 @@
-export class vec2 {
+import { CustomPrimitiveType } from '/utils.js';
+
+export class vec2 extends CustomPrimitiveType {
   constructor(x, y) {
+    super();
     this.x = x;
     this.y = y;
   }

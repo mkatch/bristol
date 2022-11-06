@@ -1,17 +1,22 @@
-import { installPrimitives, Primitives, PointPrimitive, PrimitiveDragger } from '/primitives.js';
+import { History } from '/history.js';
+import { installPrimitives, Primitives, PointPrimitive } from '/primitives.js';
 import { vec2, sq } from '/math.js';
-import { installUtils } from '/utils.js';
 import { Renderer } from '/draw.js';
 import { CircleTool, LineTool, PointTool, ToolContext } from '/tools.js';
 import { Deserializer, FileSystem, Serializer } from '/serialization.js';
 
-installUtils();
+// installUtils();
 installPrimitives();
 
 const fileSystem = new FileSystem();
 const serializer = new Serializer();
 const deserializer = new Deserializer();
 const primitives = new Primitives();
+const history = new History({
+  primitives: primitives,
+  serializer: serializer,
+  deserializer: deserializer,
+});
 const constructionProtocol = [];
 const renderer = new Renderer(canvas);
 const viewport = renderer.viewport;
@@ -228,8 +233,23 @@ function onKeyDown(e) {
     case 'a':
     case 'A':
       const serialized0 = window.localStorage.getItem('saved');
-      Primitives.dispose(primitives);
+      primitives.edit(() => Primitives.dispose(primitives));
       deserializer.destringify(serialized0, { into: primitives });
+      break;
+
+    case 'z':
+    case 'Z':
+      history.tryUndo();
+      break;
+
+    case 'y':
+    case 'Y':
+      history.tryRedo();
+      break;
+
+    case 'f':
+    case 'F':
+      history.flush();
       break;
   }
 }

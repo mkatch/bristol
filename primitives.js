@@ -1,5 +1,5 @@
 import { Geometry, signnz, sq, vec2 } from "/math.js";
-import { checkArgument, checkExpectation, checkNamedArgument, checkState, UnimplementedError } from "/utils.js";
+import { Broadcast, checkArgument, checkExpectation, checkNamedArgument, checkState, UnimplementedError } from "/utils.js";
 
 export class Primitive {
   constructor(parents) {
@@ -15,25 +15,22 @@ export class Primitive {
   }
 
   dispose() {
-    if (this.isDisposed) {
-      throw new Error("Already disposed.");
-    }
-    if (this.children.length > 0) {
-      throw new Error("Dispose all descendants first.");
-    }
+    checkState(!this.isDisposed, "Already disposed.");
+    checkState(this.children.length == 0, "Dispose all descendants first.");
+    this.beginChanges();
     for (const parent of this.parents) {
       parent.children.remove(this)
     }
     this.isDisposed = true;
-    this.notifyChange();
+    this._afterDisposalCallback(this);
   }
 
   get isInvalid() { return this._invalid; }
 
   set isInvalid(value) { this.setFlag('_invalid', value); }
 
-  notifyChange() {
-      this._changeCallback(this);
+  beginChanges() {
+    this._beforeChangeCallback(this);
   }
 
   setFlag(name, value) {
@@ -78,7 +75,12 @@ export class Primitives {
     this._changedPrimitives = [];
     this._invalidatedPrimitives = [];
     this._intersectionPoints = new Map();
-    this._changeCallback = primitive => this._onPrimitiveChange(primitive);
+    this._beforeChangeCallback =
+      primitive => this._beforePrimitiveChange(primitive);
+    this._afterDisposalCallback =
+      primitive => this._afterPrimitiveDisposal(primitive);
+    this.beforeChange = new Broadcast();
+    this.afterCreation = new Broadcast();
   }
 
   [Symbol.iterator]() {
@@ -115,7 +117,7 @@ export class Primitives {
   /// debatable what to do in such situation, but the current implementation
   /// returns `undefined`.
   tryGetOrCreateIntersectionPoint(primitive0, primitive1, kwargs) {
-    console.assert(this._invalidatedPrimitives.length == 0);
+    checkState(this._invalidatedPrimitives.length == 0);
     const approximatePosition = checkNamedArgument(
       kwargs, 'approximatePosition');
     const hints = kwargs.hints;
@@ -135,7 +137,7 @@ export class Primitives {
     }
 
     const id = Primitives._primitivePairId(primitive0, primitive1);
-    const existing = this._intersectionPoints.putIfAbsent(id, () => []);
+    const existing = this._intersectionPoints.getOrCompute(id, () => []);
 
     if (position) {
       const matching = existing.find(point => point.position.equals(position));
@@ -191,14 +193,7 @@ export class Primitives {
     try {
       changes();
     } finally {
-      Primitives.sortByLevelAscending(this._invalidatedPrimitives);
-      for (const primitive of this._invalidatedPrimitives) {
-        if (!primitive.isDisposed) {
-          primitive.applyConstraints();
-        }
-      }
-      this._invalidatedPrimitives.length = 0;
-      this._changedPrimitives.length = 0;
+      this._afterPrimitiveChanges();
     }
   }
 
@@ -206,24 +201,24 @@ export class Primitives {
     // Main purpose of the `_freePrimitiveIds` stack is to ensure deterministig
     // ID assignment during undo-redo operations.
     primitive.id = this._freePrimitiveIds.pop() ?? this._nextPrimitiveId++;
-    primitive._changeCallback = this._changeCallback;
+    primitive._beforeChangeCallback = this._beforeChangeCallback;
+    primitive._afterDisposalCallback = this._afterDisposalCallback
     this._primitives.set(primitive.id, primitive);
     primitive.applyConstraints();
+    this.afterCreation.publish(primitive);
     return primitive;
   }
 
-  _onPrimitiveChange(primitive) {
-    if (primitive.isDisposed) {
-      this._onPrimitiveDisposal(primitive);
-      return;
-    }
+  _beforePrimitiveChange(primitive) {
+    checkState(!primitive.isDisposed, "Changing disposed primitive.");
     if (this._changedPrimitives.includes(primitive)) {
       return;
     }
     if (this._invalidatedPrimitives.includes(primitive)) {
       throw new Error("Changing invalidated primitive.");
     }
-    let i = this._invalidatedPrimitives.length;
+    const newlyInvalidatedStart = this._invalidatedPrimitives.length;
+    let i = newlyInvalidatedStart;
     this._invalidatedPrimitives.push(primitive);
     while (i < this._invalidatedPrimitives.length) {
       const invalidated = this._invalidatedPrimitives[i++];
@@ -237,9 +232,24 @@ export class Primitives {
       }
     }
     this._changedPrimitives.push(primitive);
+    const newlyInvalidatedEnd = this._invalidatedPrimitives.length;
+    for (i = newlyInvalidatedStart; i < newlyInvalidatedEnd; ++i) {
+      this.beforeChange.publish(this._invalidatedPrimitives[i]);
+    }
   }
 
-  _onPrimitiveDisposal(primitive) {
+  _afterPrimitiveChanges() {
+    Primitives.sortByLevelAscending(this._invalidatedPrimitives);
+    for (const primitive of this._invalidatedPrimitives) {
+      if (!primitive.isDisposed) {
+        primitive.applyConstraints();
+      }
+    }
+    this._invalidatedPrimitives.length = 0;
+    this._changedPrimitives.length = 0;
+  }
+
+  _afterPrimitiveDisposal(primitive) {
     this._primitives.delete(primitive.id);
     this._freePrimitiveIds.push(primitive.id);
 
@@ -279,16 +289,6 @@ export class Primitives {
       return [];
     }
   }
-
-  // static intersection(primitive0, primitive1, position) {
-  //   const candidates = Primitives.intersections(primitive0, primitive1);
-  //   if (candidates.length > 0) {
-  //     return candidates.findMinBy(
-  //       candidate => vec2.distSq(position, candidate));
-  //   } else {
-  //     return undefined;
-  //   }
-  // }
 
   static _lineIntersections(line, primitive) {
     if (primitive instanceof LinePrimitive) {
@@ -414,7 +414,7 @@ export class PointPrimitive extends Primitive {
   }
 
   moveTo(position) {
-    checkState(tryMoveTo(position), "Cannot be moved.");
+    checkState(this.tryMoveTo(position), "Cannot be moved.");
   }
 }
 
@@ -426,8 +426,8 @@ class FreePointPrimitiveDragger extends PrimitiveDragger {
   }
 
   dragTo(position) {
+    this.point.beginChanges();
     this.point.position.copy(position).add(this.offset);
-    this.point.notifyChange();
   }
 }
 
@@ -529,6 +529,7 @@ class PivotPointPrimitiveDragger extends PrimitiveDragger {
   }
 
   dragTo(position) {
+    this.subject.beginChanges();
     const u = vec2.span(this.pivot.position, position);
     const uLength = u.length();
     if (1000 * uLength < this.distance) {
@@ -538,7 +539,6 @@ class PivotPointPrimitiveDragger extends PrimitiveDragger {
       u, vec2.span(this.pivot.position, this.subject.position)));
     this.subject.position
       .copy(this.pivot.position).addScaled(s * this.distance / uLength, u);
-    this.subject.notifyChange();
   }
 }
 
@@ -675,11 +675,11 @@ class FixedCernterCirclePrimitiveDragger extends PrimitiveDragger {
   }
 
   dragTo(position) {
+    this.edgePoint.beginChanges();
     const radius = vec2.dist(this.centerPoint.position, position);
     this.edgePoint.position
       .copy(this.centerPoint.position)
       .addScaled(radius, this.rayDirection);
-    this.edgePoint.notifyChange();
   }
 }
 
@@ -700,11 +700,11 @@ class FixedEdgeCirclePrimitiveDragger extends PrimitiveDragger {
   }
 
   dragTo(position) {
+    this.centerPoint.beginChanges();
     const E = this.edgePoint.position, P = position;
     this.centerPoint.position
       .mid(E, P)
       .addScaled(this.deviation, vec2.span(E, P).rot90R());
-    this.centerPoint.notifyChange();
   }
 }
 
