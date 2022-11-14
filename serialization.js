@@ -25,6 +25,10 @@ export class DeserializationError extends Error {
       ? e
       : new DeserializationError(e.toString(), e);
   }
+
+  static causeMessage(e) {
+    return e instanceof DeserializationError ? e.message : e.toString();
+  }
 }
 
 export class Serializer {
@@ -39,11 +43,14 @@ export class Serializer {
     checkState(!this._recordifyInProgress, "Nested call to `recordify`");
     try {
       this._recordifyInProgress = true;
-      this._allowsDisposed = kwargs.disposed == 'skip';
+      this._skipsDisposed = kwargs.disposed == 'skip';
       if (isIterable(primitives)) {
         const records = kwargs.appendTo ?? [];
         for (const primitive of primitives) {
-          records.push(this._recordifySingle(primitive));
+          const record = this._recordifySingle(primitive);
+          if (record) {
+            records.push(record);
+          }
         }
         return records;
       } else {
@@ -61,10 +68,14 @@ export class Serializer {
   mutualDiff(befores, afters) {
     const pairs = new Map();
     for (const before of befores) {
+      checkArgument(
+        !pairs.has(before.id), 'befores', `Duplicate id=${before.id}.`);
       pairs.set(before.id, [before, undefined]);
     }
     for (const after of afters) {
       const pair = pairs.getOrCompute(after.id, () => [undefined, undefined]);
+      checkArgument(
+        pair[1] === undefined, 'afters', `Duplicate id=${after.id}.`);
       pair[1] = after;
     }
     const diff = {
@@ -165,33 +176,47 @@ export class Serializer {
   }
 
   _recordifySingle(primitive) {
-    const record = { id: primitive.id };
-    if (primitive.parents.length > 0) {
-      record.parents = primitive.parents.map(parent => parent.id);
-    }
-    if (primitive.isInvalid) {
-      record.invalid = true;
-    }
-
-    const prototype = Object.getPrototypeOf(primitive);
-    if (prototype === FreePointPrimitive.prototype) {
-      record.type = 'P';
-      record.position = primitive.position.clone();
-    } else if (prototype === IntersectionPointPrimitive.prototype) {
-      record.type = 'X';
-      record.position = primitive.position.clone();
-      if (primitive.hints.length > 0) {
-        record.hints = Object.deepClone(primitive.hints);
+    try {
+      if (primitive.isDisposed) {
+        if (this._skipsDisposed) {
+          return undefined;
+        } else {
+          throw new DeserializationError("Disposed primitives are prohibited.");
+        }
       }
-    } else if (prototype === TwoPointLinePrimitive.prototype) {
-      record.type = 'L';
-    } else if (prototype === CirclePrimitive.prototype) {
-      record.type = 'O';
-    } else {
-      throw new UnimplementedError();
-    }
 
-    return record;
+      const record = { id: primitive.id };
+      if (primitive.parents.length > 0) {
+        record.parents = primitive.parents.map(parent => parent.id);
+      }
+      if (primitive.isInvalid) {
+        record.invalid = true;
+      }
+
+      const prototype = Object.getPrototypeOf(primitive);
+      if (prototype === FreePointPrimitive.prototype) {
+        record.type = 'P';
+        record.position = primitive.position.clone();
+      } else if (prototype === IntersectionPointPrimitive.prototype) {
+        record.type = 'X';
+        record.position = primitive.position.clone();
+        if (primitive.hints.length > 0) {
+          record.hints = Object.deepClone(primitive.hints);
+        }
+      } else if (prototype === TwoPointLinePrimitive.prototype) {
+        record.type = 'L';
+      } else if (prototype === CirclePrimitive.prototype) {
+        record.type = 'O';
+      } else {
+        throw new UnimplementedError(
+          `Primitive type ${prototype.constructor.name}`);
+      }
+
+      return record;
+    } catch (e) {
+      throw new DeserializationError(`Primitive id=${primitive.id}: ` +
+        DeserializationError.causeMessage(e));
+    }
   }
 
   static _stringifySingleRecord(record, builder) {
@@ -300,9 +325,8 @@ export class Deserializer {
         this._derecordifySingleDiff(record);
       }
     } catch (e) {
-      const message = e instanceof DeserializationError
-        ? e.message : e.toString();
-      throw new DeserializationError(`Record id=${id}: ${message}`);
+      throw new DeserializationError(
+        `Record id=${id}: ${DeserializationError.causeMessage(e)}`);
     }
   }
 

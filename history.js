@@ -39,20 +39,23 @@ export class History {
       this._diffs.length = ++this._latestDiffIndex;
       this._diffs.push(diff);
     }
+    this._befores.length = 0;
     this._newPrimitives.clear();
     this._trackedPrimitives.clear();
   }
 
   tryUndo() {
-    if (this._latestDiffIndex >= 0) {
-      this._applyDiff(this._diffs[this._latestDiffIndex--].backward);
-    }
+    this._applyDiff(() =>
+      this._latestDiffIndex >= 0
+        ? this._diffs[this._latestDiffIndex--].backward
+        : undefined);
   }
 
   tryRedo() {
-    if (this._latestDiffIndex < this._diffs.length - 1) {
-      this._applyDiff(this._diffs[++this._latestDiffIndex].forward);
-    }
+    this._applyDiff(() =>
+      this._latestDiffIndex < this._diffs.length - 1
+        ? this._diffs[++this._latestDiffIndex].forward
+        : undefined);
   }
 
   _beforePrimitiveChange(primitive) {
@@ -76,15 +79,26 @@ export class History {
     this._newPrimitives.set(primitive.id, primitive);
   }
 
-  _applyDiff(records) {
+  _applyDiff(recordsSupplier) {
+    checkState(!this._isApplyingDiff, "Nested call to `_applyDiff`.");
+    checkState(
+      this._newPrimitives.size == 0 && this._trackedPrimitives.size == 0,
+      "Cannot `_applyDiff` while there are pending changes.");
     this._isApplyingDiff = true;
     try {
-      this._deserializer.derecordify(records, {
-        into: this._primitives,
-        diff: true,
-      });
+      const records = recordsSupplier();
+      if (records) {
+        this._deserializer.derecordify(records, {
+          into: this._primitives,
+          diff: true,
+        });
+      }
     } finally {
       this._isApplyingDiff = false;
     }
+  }
+
+  _checkNotApplyingDiff() {
+    checkState(!this._isApplyingDiff)
   }
 }

@@ -8,6 +8,10 @@ import { Deserializer, FileSystem, Serializer } from '/serialization.js';
 // installUtils();
 installPrimitives();
 
+function setDebugPanelContent(content) {
+  debugPanel.innerText = content;
+}
+
 const fileSystem = new FileSystem();
 const serializer = new Serializer();
 const deserializer = new Deserializer();
@@ -131,6 +135,11 @@ function onMouseMove(e) {
   if (markedPrimitives.some(primitive => primitive instanceof PointPrimitive)) {
     markedPrimitives.retainOnly(
       primitive => primitive instanceof PointPrimitive);
+  }
+  if (markedPrimitives.length > 0) {
+    setDebugPanelContent(serializer.stringify(markedPrimitives));
+  } else {
+    setDebugPanelContent("");
   }
 
   tool.onMouseMove();

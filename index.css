@@ -7,3 +7,15 @@ body {
   height: 100%;
   overflow: hidden;
 }
+
+#debugPanel {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  width: 50%;
+  padding: 10px;
+  border-radius: 10px;;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  font-family: monospace;
+}
