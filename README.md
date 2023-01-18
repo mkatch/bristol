@@ -1,1 +1,1 @@
-![screencast.gif]()
+![](screencast.gif)
